@@ -96,7 +96,13 @@ export function handleCollision(bodyA, bodyB) {
 }
 
 // ── Bomb Effect ─────────────────────────────────────────────────
-// When a bomb hits a ball, suck in and merge ALL balls of that color.
+// When a bomb hits a ball, suck in ALL balls of that color then merge.
+let activeBombEffect = null;
+
+export function getActiveBombEffect() {
+  return activeBombEffect;
+}
+
 function triggerBombEffect(bombEntry, targetEntry) {
   const targetTier = targetEntry.tierIndex;
 
@@ -117,38 +123,95 @@ function triggerBombEffect(bombEntry, targetEntry) {
 
   if (targets.length < 2) return 0;
 
-  // Calculate center point for visual effect
+  // Calculate center point
   const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
   const midY = targets.reduce((s, t) => s + t.body.position.y, 0) / targets.length;
 
-  // Merge in pairs
-  const pairs = Math.floor(targets.length / 2);
-  let totalPoints = 0;
-
-  for (let i = 0; i < pairs; i++) {
-    const a = targets[i * 2];
-    const b = targets[i * 2 + 1];
-
-    const ballA = activeBalls.get(a.id);
-    const ballB = activeBalls.get(b.id);
-    if (!ballA || !ballB) continue;
-
-    totalPoints += performMerge([a.body, b.body], targetTier);
-  }
-  // Odd ball remains untouched
-
-  // Add a big merge effect at the center
-  if (totalPoints > 0) {
-    mergeEffects.push({
-      x: midX,
-      y: midY,
-      tierIndex: targetTier + 1,
-      startTime: performance.now(),
-      duration: 800,
-    });
+  // Mark all targets as merging so normal collisions won't touch them
+  for (const t of targets) {
+    t.body.isMerging = true;
+    // Store original positions for lerping
+    t.startX = t.body.position.x;
+    t.startY = t.body.position.y;
   }
 
-  return totalPoints;
+  // Set up the async suck-in effect
+  activeBombEffect = {
+    targetTier,
+    targets,
+    centerX: midX,
+    centerY: midY,
+    startTime: performance.now(),
+    suckDuration: 450, // ms to suck in
+  };
+
+  return 0; // Points awarded later when suck-in completes
+}
+
+// Called each frame from game loop. Returns { points, tier, x, y } when merge happens.
+export function updateBombEffect() {
+  if (!activeBombEffect) return null;
+
+  const now = performance.now();
+  const elapsed = now - activeBombEffect.startTime;
+  const progress = Math.min(elapsed / activeBombEffect.suckDuration, 1);
+  const { targets, centerX, centerY, targetTier } = activeBombEffect;
+
+  // Ease-in: slow start, fast end (cubic)
+  const eased = progress * progress * progress;
+
+  // Pull all target balls toward center
+  for (const t of targets) {
+    if (!activeBalls.has(t.id)) continue;
+    const body = t.body;
+    const newX = t.startX + (centerX - t.startX) * eased;
+    const newY = t.startY + (centerY - t.startY) * eased;
+    Physics.setBodyPosition(body, { x: newX, y: newY });
+    Physics.setBodyVelocity(body, { x: 0, y: 0 });
+  }
+
+  // When suck-in is complete, merge all pairs
+  if (progress >= 1) {
+    const pairs = Math.floor(targets.length / 2);
+    let totalPoints = 0;
+
+    for (let i = 0; i < pairs; i++) {
+      const a = targets[i * 2];
+      const b = targets[i * 2 + 1];
+      if (!activeBalls.has(a.id) || !activeBalls.has(b.id)) continue;
+      totalPoints += performMerge([a.body, b.body], targetTier);
+    }
+
+    // Odd ball left over — unmark it
+    if (targets.length % 2 === 1) {
+      const odd = targets[targets.length - 1];
+      if (activeBalls.has(odd.id)) {
+        odd.body.isMerging = false;
+      }
+    }
+
+    // Big merge effect at center
+    if (totalPoints > 0) {
+      mergeEffects.push({
+        x: centerX,
+        y: centerY,
+        tierIndex: targetTier + 1,
+        startTime: performance.now(),
+        duration: 800,
+      });
+    }
+
+    const result = {
+      points: totalPoints,
+      tier: targetTier + 1,
+      x: centerX,
+      y: centerY,
+    };
+    activeBombEffect = null;
+    return result;
+  }
+
+  return null; // Still sucking in
 }
 
 // Expose for external use (returns the tier hit, for particles)

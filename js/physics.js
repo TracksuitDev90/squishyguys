@@ -201,6 +201,18 @@ export function removeBody(body) {
   Composite.remove(engine.world, body);
 }
 
+export function setBodyPosition(body, pos) {
+  Body.setPosition(body, pos);
+}
+
+export function setBodyVelocity(body, vel) {
+  Body.setVelocity(body, vel);
+}
+
+export function setBodyStatic(body, isStatic) {
+  Body.setStatic(body, isStatic);
+}
+
 // ── Collision Handling ──────────────────────────────────────────
 function registerCollisionHandler() {
   Events.on(engine, 'collisionStart', (event) => {

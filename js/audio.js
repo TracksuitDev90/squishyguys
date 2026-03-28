@@ -5,18 +5,18 @@ let audioCtx = null;
 let masterGain = null;
 let muted = false;
 
-// Note frequencies for merge sounds (ascending musical scale)
+// Note frequencies for merge sounds (descending — bigger balls = deeper pitch)
 const MERGE_NOTES = [
-  261.63, // C4 - white→red
-  293.66, // D4 - red→yellow
-  329.63, // E4 - yellow→orange
-  349.23, // F4 - orange→green
-  392.00, // G4 - green→blue
-  440.00, // A4 - blue→indigo
-  493.88, // B4 - indigo→violet
-  523.25, // C5 - violet→chrome
-  587.33, // D5 - chrome→rainbow
-  659.25, // E5 - rainbow bonus
+  659.25, // E5 - white→red (smallest, highest pitch)
+  587.33, // D5 - red→yellow
+  523.25, // C5 - yellow→orange
+  493.88, // B4 - orange→green
+  440.00, // A4 - green→blue
+  392.00, // G4 - blue→indigo
+  349.23, // F4 - indigo→violet
+  329.63, // E4 - violet→chrome
+  293.66, // D4 - chrome→rainbow
+  261.63, // C4 - rainbow bonus (biggest, deepest pitch)
 ];
 
 function ensureContext() {
@@ -51,25 +51,25 @@ export function playDrop(tierIndex) {
 
   const now = ctx.currentTime;
 
-  // Soft percussive thud
+  // Soft percussive thud — deeper for bigger balls
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(150 + tierIndex * 10, now);
-  osc.frequency.exponentialRampToValueAtTime(60, now + 0.1);
-  gain.gain.setValueAtTime(0.2, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+  osc.frequency.setValueAtTime(220 - tierIndex * 18, now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(30, 60 - tierIndex * 4), now + 0.1);
+  gain.gain.setValueAtTime(0.2 + tierIndex * 0.02, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15 + tierIndex * 0.02);
   osc.connect(gain);
   gain.connect(masterGain);
   osc.start(now);
-  osc.stop(now + 0.15);
+  osc.stop(now + 0.18 + tierIndex * 0.02);
 
-  // Tiny chirp
+  // Tiny chirp — lower pitch for bigger balls
   const chirp = ctx.createOscillator();
   const chirpGain = ctx.createGain();
   chirp.type = 'sine';
-  chirp.frequency.setValueAtTime(800 + tierIndex * 40, now);
-  chirp.frequency.exponentialRampToValueAtTime(400, now + 0.08);
+  chirp.frequency.setValueAtTime(1000 - tierIndex * 70, now);
+  chirp.frequency.exponentialRampToValueAtTime(Math.max(200, 500 - tierIndex * 30), now + 0.08);
   chirpGain.gain.setValueAtTime(0.08, now);
   chirpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
   chirp.connect(chirpGain);
@@ -163,6 +163,42 @@ export function playMerge(tierIndex, comboCount) {
       osc.stop(now + delay + 0.8);
     });
   }
+}
+
+// ── Bomb suction sound: rising whoosh as balls get pulled in ────
+export function playBombSuck() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+
+  // Rising whoosh (filtered noise via oscillator sweep)
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(60, now);
+  osc.frequency.exponentialRampToValueAtTime(400, now + 0.4);
+  gain.gain.setValueAtTime(0.0, now);
+  gain.gain.linearRampToValueAtTime(0.15, now + 0.15);
+  gain.gain.linearRampToValueAtTime(0.2, now + 0.35);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+  osc.connect(gain);
+  gain.connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.5);
+
+  // Sub-bass rumble
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(40, now);
+  sub.frequency.exponentialRampToValueAtTime(80, now + 0.45);
+  subGain.gain.setValueAtTime(0.12, now);
+  subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+  sub.connect(subGain);
+  subGain.connect(masterGain);
+  sub.start(now);
+  sub.stop(now + 0.5);
 }
 
 // ── Bounce sound: soft impact when balls collide with walls ─────
