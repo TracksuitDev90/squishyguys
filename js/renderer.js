@@ -95,7 +95,7 @@ function drawBackground() {
   const grad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
   grad.addColorStop(0, '#1a1a2e');
   grad.addColorStop(0.5, '#16213e');
-  grad.addColorStop(1, '#0f3460');
+  grad.addColorStop(1, '#1a4a7a');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
