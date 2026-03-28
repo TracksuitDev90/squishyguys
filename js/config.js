@@ -5,7 +5,7 @@ export const GAME_HEIGHT = 700;
 // Cup geometry
 export const CUP_WALL_THICKNESS = 12;
 export const CUP_BOTTOM_Y = GAME_HEIGHT - 20;
-export const CUP_TOP_Y = 160;
+export const CUP_TOP_Y = 210;
 export const CUP_LEFT_X = 50;
 export const CUP_RIGHT_X = GAME_WIDTH - 50;
 export const CUP_FLOOR_Y = CUP_BOTTOM_Y;
