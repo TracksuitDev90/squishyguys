@@ -226,7 +226,7 @@ function loop(timestamp) {
     previewTier: currentDropTier,
     nextTier: nextDropTier,
     score: Score.current,
-    highScore: Score.getHighScore(),
+    highScore: Math.max(Score.bestCombo, Score.getBestCombo()),
     combo: Score.combo,
     mergeEffects: Balls.mergeEffects,
     won,

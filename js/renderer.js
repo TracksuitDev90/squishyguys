@@ -66,7 +66,6 @@ export function render(state) {
   if (state.gameState === 'playing') {
     drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice);
     drawDropLine(state.previewX);
-    drawNextBall(state.nextTier);
   }
 
   drawScore(state.score, state.highScore, state.combo);
@@ -308,7 +307,7 @@ function drawBall(body, tierIndex, gameState) {
   } else if (tier.name === 'chrome') {
     drawChromeBall(r);
   } else {
-    drawSolidBall(r, tier.color, tier.stroke, tierIndex);
+    drawSolidBall(r, tier.color, tier.stroke, tierIndex, body.id);
   }
 
   ctx.restore();
@@ -319,12 +318,46 @@ export function cleanupSquishStates(activeBallIds) {
   for (const id of ballSquish.keys()) {
     if (!activeBallIds.has(id)) {
       ballSquish.delete(id);
+      ballHighlightCache.delete(id);
     }
   }
 }
 
+// ── Seeded random for per-ball highlight variation ──────────────
+const ballHighlightCache = new Map();
+function getBallHighlights(ballId) {
+  if (ballHighlightCache.has(ballId)) return ballHighlightCache.get(ballId);
+  // Generate unique highlight parameters for this ball
+  const h = {
+    // Primary highlight offset and shape
+    primaryX: -0.15 + (pseudoRand(ballId * 7) - 0.5) * 0.2,
+    primaryY: -0.25 + (pseudoRand(ballId * 13) - 0.5) * 0.15,
+    primaryW: 0.35 + (pseudoRand(ballId * 19) - 0.5) * 0.15,
+    primaryH: 0.18 + (pseudoRand(ballId * 23) - 0.5) * 0.1,
+    primaryAngle: -0.5 + (pseudoRand(ballId * 29) - 0.5) * 0.8,
+    primaryAlpha: 0.2 + pseudoRand(ballId * 31) * 0.12,
+    // Secondary highlight (sharp dot)
+    dotX: -0.12 + (pseudoRand(ballId * 37) - 0.5) * 0.25,
+    dotY: -0.38 + (pseudoRand(ballId * 41) - 0.5) * 0.15,
+    dotSize: 0.06 + pseudoRand(ballId * 43) * 0.06,
+    dotAlpha: 0.35 + pseudoRand(ballId * 47) * 0.3,
+    // Shadow crescent
+    shadowX: 0.03 + (pseudoRand(ballId * 53) - 0.5) * 0.1,
+    shadowY: 0.32 + (pseudoRand(ballId * 59) - 0.5) * 0.1,
+    shadowAngle: 0.2 + (pseudoRand(ballId * 61) - 0.5) * 0.4,
+  };
+  ballHighlightCache.set(ballId, h);
+  return h;
+}
+
+function pseudoRand(seed) {
+  // Simple hash → 0-1 float
+  let x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
 // ── Solid Ball ──────────────────────────────────────────────────
-function drawSolidBall(r, fill, stroke, tierIndex) {
+function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   // Outer glow
   const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.4);
   glow.addColorStop(0, hexWithAlpha(fill, 0.25));
@@ -364,22 +397,30 @@ function drawSolidBall(r, fill, stroke, tierIndex) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  // Per-ball randomized highlights
+  const hl = ballId != null ? getBallHighlights(ballId) : {
+    primaryX: -0.2, primaryY: -0.28, primaryW: 0.4, primaryH: 0.22,
+    primaryAngle: -0.5, primaryAlpha: 0.25,
+    dotX: -0.15, dotY: -0.42, dotSize: 0.08, dotAlpha: 0.5,
+    shadowX: 0.05, shadowY: 0.35, shadowAngle: 0.2,
+  };
+
   // Primary highlight (big soft reflection)
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.fillStyle = `rgba(255,255,255,${hl.primaryAlpha})`;
   ctx.beginPath();
-  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.4, r * 0.22, -0.5, 0, Math.PI * 2);
+  ctx.ellipse(r * hl.primaryX, r * hl.primaryY, r * hl.primaryW, r * hl.primaryH, hl.primaryAngle, 0, Math.PI * 2);
   ctx.fill();
 
   // Secondary highlight (sharp tiny dot)
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillStyle = `rgba(255,255,255,${hl.dotAlpha})`;
   ctx.beginPath();
-  ctx.arc(-r * 0.15, -r * 0.42, r * 0.08, 0, Math.PI * 2);
+  ctx.arc(r * hl.dotX, r * hl.dotY, r * hl.dotSize, 0, Math.PI * 2);
   ctx.fill();
 
   // Bottom shadow crescent
   ctx.fillStyle = 'rgba(0,0,0,0.08)';
   ctx.beginPath();
-  ctx.ellipse(r * 0.05, r * 0.35, r * 0.5, r * 0.18, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(r * hl.shadowX, r * hl.shadowY, r * 0.5, r * 0.18, hl.shadowAngle, 0, Math.PI * 2);
   ctx.fill();
 }
 
@@ -610,7 +651,7 @@ function drawScore(score, highScore, combo) {
   // High score
   ctx.font = '14px "Patrick Hand", cursive';
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fillText(`Best: ${highScore.toLocaleString()}`, GAME_WIDTH / 2, 80);
+  ctx.fillText(`Best Combo: ${highScore.toLocaleString()}`, GAME_WIDTH / 2, 80);
 
   // Combo indicator with scale animation
   if (combo > 1) {
@@ -727,12 +768,11 @@ function drawGameOver(score, highScore, won) {
   ctx.fillStyle = '#FFFFFF';
   ctx.fillText(`Score: ${score.toLocaleString()}`, cx, cy + 10);
 
-  // New high score
-  if (score >= highScore && score > 0) {
-    const bounce = Math.sin(performance.now() * 0.006) * 3;
-    ctx.font = 'bold 22px "Patrick Hand", cursive';
-    ctx.fillStyle = '#F1C40F';
-    ctx.fillText('New High Score!', cx, cy + 45 + bounce);
+  // Best combo display
+  if (highScore > 0) {
+    ctx.font = '18px "Patrick Hand", cursive';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText(`Best Combo: ${highScore.toLocaleString()}`, cx, cy + 42);
   }
 
   // Restart prompt with pulse
