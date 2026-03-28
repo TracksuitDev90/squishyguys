@@ -194,14 +194,14 @@ function drawWobblyLine(x1, y1, x2, y2, seedOffset) {
 
 // ── Danger Line ─────────────────────────────────────────────────
 function drawDangerLine(dangerLevel) {
-  const alpha = 0.2 + (dangerLevel || 0) * 0.4;
+  const alpha = 0.35 + (dangerLevel || 0) * 0.5;
   const dashOffset = (performance.now() * 0.02) % 16;
 
   ctx.save();
   ctx.setLineDash([8, 8]);
   ctx.lineDashOffset = -dashOffset;
-  ctx.strokeStyle = `rgba(231, 76, 60, ${alpha})`;
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = `rgba(255, 50, 30, ${Math.min(alpha, 1)})`;
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(CUP_LEFT_X + 5, DANGER_LINE_Y);
   ctx.lineTo(CUP_RIGHT_X - 5, DANGER_LINE_Y);
