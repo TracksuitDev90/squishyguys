@@ -10,6 +10,7 @@ import * as Input from './input.js';
 import * as Score from './score.js';
 import * as Particles from './particles.js';
 import * as Audio from './audio.js';
+import * as Store from './store.js';
 
 // ── State ───────────────────────────────────────────────────────
 let gameState = 'playing'; // 'playing' | 'gameover'
@@ -61,9 +62,9 @@ function setup() {
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
 
-  // Handle mute button clicks
-  canvas.addEventListener('mousedown', handleMuteClick);
-  canvas.addEventListener('touchstart', handleMuteTouch, { passive: false });
+  // Handle mute button and store clicks
+  canvas.addEventListener('mousedown', handleUIClick);
+  canvas.addEventListener('touchstart', handleUITouch, { passive: false });
 
   requestAnimationFrame(loop);
 }
@@ -88,49 +89,136 @@ function checkNewUnlocks() {
   }
 }
 
-// ── Mute Button ─────────────────────────────────────────────────
-function handleMuteClick(e) {
+// ── UI Click Handling (Mute + Store) ────────────────────────────
+function handleUIClick(e) {
   const rect = e.target.getBoundingClientRect();
   const scaleX = GAME_WIDTH / rect.width;
   const scaleY = GAME_HEIGHT / rect.height;
   const x = (e.clientX - rect.left) * scaleX;
   const y = (e.clientY - rect.top) * scaleY;
-  checkMuteHit(x, y);
+  if (checkUIHit(x, y)) {
+    e.stopImmediatePropagation();
+  }
 }
 
-function handleMuteTouch(e) {
+function handleUITouch(e) {
   const touch = e.touches[0];
   const rect = e.target.getBoundingClientRect();
   const scaleX = GAME_WIDTH / rect.width;
   const scaleY = GAME_HEIGHT / rect.height;
   const x = (touch.clientX - rect.left) * scaleX;
   const y = (touch.clientY - rect.top) * scaleY;
-  if (checkMuteHit(x, y)) {
+  if (checkUIHit(x, y)) {
     e.stopImmediatePropagation();
   }
 }
 
-function checkMuteHit(x, y) {
+function checkUIHit(x, y) {
+  // Mute button
   const btn = Renderer.MUTE_BTN;
   const dist = Math.sqrt((x - btn.x) ** 2 + (y - btn.y) ** 2);
   if (dist < btn.size) {
     Audio.toggleMute();
     return true;
   }
+
+  if (gameState !== 'playing') return false;
+
+  // Store buttons
+  const storeHit = Renderer.checkStoreButtonHit(x, y);
+  if (storeHit) {
+    const result = Store.purchase(storeHit, Score.current);
+    if (result.success) {
+      Score.current -= result.cost;
+
+      if (storeHit === 'colorBomb') {
+        activateColorBomb();
+      } else if (storeHit === 'cupExtend') {
+        applyNewCupExtension();
+      }
+
+      Audio.playMerge(5, 1); // satisfying purchase sound
+      return true;
+    }
+  }
   return false;
 }
 
+// ── Color Bomb ──────────────────────────────────────────────────
+function activateColorBomb() {
+  // Find the tier with the most balls on screen
+  const tierCounts = new Map();
+  for (const { tierIndex } of Balls.getAll().values()) {
+    tierCounts.set(tierIndex, (tierCounts.get(tierIndex) || 0) + 1);
+  }
+
+  // Find tier with most balls (at least 2 to be useful)
+  let bestTier = -1;
+  let bestCount = 1;
+  for (const [tier, count] of tierCounts) {
+    if (count > bestCount && tier < BALL_TIERS.length - 1) {
+      bestTier = tier;
+      bestCount = count;
+    }
+  }
+
+  if (bestTier === -1) {
+    // No valid tier found, refund by not consuming
+    Store.consumeColorBomb();
+    return;
+  }
+
+  // Gather all balls of this tier
+  const targets = [];
+  for (const [id, { body, tierIndex }] of Balls.getAll()) {
+    if (tierIndex === bestTier) {
+      targets.push({ id, body, tierIndex });
+    }
+  }
+
+  // Merge them in pairs
+  const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
+  const midY = targets.reduce((s, t) => s + t.body.position.y, 0) / targets.length;
+
+  // Emit big visual effect at center
+  Particles.emitMerge(midX, midY, bestTier + 1, 3);
+
+  const pairs = Math.floor(targets.length / 2);
+  for (let i = 0; i < pairs; i++) {
+    const a = targets[i * 2];
+    const b = targets[i * 2 + 1];
+    const points = Balls.forceColorBombMerge(a.id, b.id);
+    if (points > 0) {
+      Score.addPoints(points);
+    }
+  }
+  // If odd, last ball remains
+
+  Store.consumeColorBomb();
+}
+
+// ── Cup Extension ───────────────────────────────────────────────
+function applyNewCupExtension() {
+  Physics.extendCup(Store.getCupExtendPx());
+  Particles.triggerShake(8);
+}
+
 // ── Danger Level Tracking ───────────────────────────────────────
+function getEffectiveDangerY() {
+  return DANGER_LINE_Y - Store.getCupExtendPx();
+}
+
 function updateDangerLevel() {
   const now = performance.now();
   let maxDanger = 0;
+  const effectiveDangerY = getEffectiveDangerY();
 
   for (const { body } of Balls.getAll().values()) {
     if (body.isMerging) continue;
     if (now - body.createdAt < 1500) continue;
 
     const tierRadius = BALL_TIERS[body.tierIndex].radius;
-    if (body.position.y - tierRadius < DANGER_LINE_Y) {
+    if (body.position.y - tierRadius < effectiveDangerY) {
       if (body.aboveDangerSince) {
         const elapsed = now - body.aboveDangerSince;
         maxDanger = Math.max(maxDanger, elapsed / DANGER_DURATION_MS);
@@ -190,7 +278,7 @@ function loop(timestamp) {
       Particles.emitMerge(cx, cy, 9, 5);
     }
     // Check game over
-    else if (Balls.checkGameOver()) {
+    else if (Balls.checkGameOver(getEffectiveDangerY())) {
       gameState = 'gameover';
       won = false;
       Score.saveHighScore();
@@ -234,6 +322,15 @@ function loop(timestamp) {
     isDragging: Input.state.isDragging,
     isTouchDevice: Input.getIsTouchDevice(),
     muted: Audio.isMuted(),
+    cupExtendPx: Store.getCupExtendPx(),
+    storePrices: {
+      colorBomb: Store.getPrice('colorBomb'),
+      cupExtend: Store.getPrice('cupExtend'),
+    },
+    storeAffordable: {
+      colorBomb: Store.canAfford('colorBomb', Score.current),
+      cupExtend: Store.canAfford('cupExtend', Score.current),
+    },
   });
 }
 
@@ -241,6 +338,8 @@ function resetGame() {
   Balls.reset();
   Score.reset();
   Particles.reset();
+  Store.reset();
+  Physics.resetCup();
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
   gameState = 'playing';
