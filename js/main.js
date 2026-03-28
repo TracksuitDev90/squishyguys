@@ -33,26 +33,25 @@ function setup() {
     const isBombHit = bodyA.isBomb || bodyB.isBomb;
 
     const points = Balls.handleCollision(bodyA, bodyB);
+
+    // Bomb returns 0 initially (suck-in phase); play suction sound
+    if (isBombHit && Balls.getActiveBombEffect()) {
+      Audio.playBombSuck();
+      Particles.triggerShake(4);
+      return;
+    }
+
     if (points > 0) {
       Score.addPoints(points);
 
       const mergeX = (bodyA.position.x + bodyB.position.x) / 2;
       const mergeY = (bodyA.position.y + bodyB.position.y) / 2;
 
-      if (isBombHit) {
-        // Big bomb explosion effect
-        Particles.emitMerge(mergeX, mergeY, 7, 5);
-        Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
-        Audio.playMerge(8, 3);
-        Input.hapticMerge(8);
-        Particles.triggerShake(12);
-      } else {
-        const newTier = findNewTier(bodyA, bodyB);
-        Particles.emitMerge(mergeX, mergeY, newTier, Score.combo);
-        Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
-        Audio.playMerge(newTier, Score.combo);
-        Input.hapticMerge(newTier);
-      }
+      const newTier = findNewTier(bodyA, bodyB);
+      Particles.emitMerge(mergeX, mergeY, newTier, Score.combo);
+      Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
+      Audio.playMerge(newTier, Score.combo);
+      Input.hapticMerge(newTier);
 
       checkNewUnlocks();
     }
@@ -218,6 +217,18 @@ function loop(timestamp) {
 
     // Step physics
     Physics.step(delta);
+
+    // Update bomb suck-in effect
+    const bombResult = Balls.updateBombEffect();
+    if (bombResult && bombResult.points > 0) {
+      Score.addPoints(bombResult.points);
+      Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
+      Particles.emitScorePopup(bombResult.x, bombResult.y, bombResult.points, Score.combo);
+      Audio.playMerge(bombResult.tier, 3);
+      Input.hapticMerge(8);
+      Particles.triggerShake(12);
+      checkNewUnlocks();
+    }
 
     // Update danger
     updateDangerLevel();
