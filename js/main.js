@@ -19,7 +19,7 @@ let nextDropTier = 0;
 let lastDropTime = 0;
 let won = false;
 let dangerLevel = 0; // 0-1, how close to game over
-let previouslyUnlocked = new Set([0, 1, 2, 3, 4]);
+let previouslyUnlocked = new Set([0, 1, 2, 3]);
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -30,26 +30,30 @@ function setup() {
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
+    const isBombHit = bodyA.isBomb || bodyB.isBomb;
+
     const points = Balls.handleCollision(bodyA, bodyB);
     if (points > 0) {
       Score.addPoints(points);
 
-      // Find which tier was just created
       const mergeX = (bodyA.position.x + bodyB.position.x) / 2;
       const mergeY = (bodyA.position.y + bodyB.position.y) / 2;
-      const newTier = findNewTier(bodyA, bodyB);
 
-      // Particles
-      Particles.emitMerge(mergeX, mergeY, newTier, Score.combo);
-      Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
+      if (isBombHit) {
+        // Big bomb explosion effect
+        Particles.emitMerge(mergeX, mergeY, 7, 5);
+        Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
+        Audio.playMerge(8, 3);
+        Input.hapticMerge(8);
+        Particles.triggerShake(12);
+      } else {
+        const newTier = findNewTier(bodyA, bodyB);
+        Particles.emitMerge(mergeX, mergeY, newTier, Score.combo);
+        Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
+        Audio.playMerge(newTier, Score.combo);
+        Input.hapticMerge(newTier);
+      }
 
-      // Sound
-      Audio.playMerge(newTier, Score.combo);
-
-      // Haptic
-      Input.hapticMerge(newTier);
-
-      // Check for new unlock
       checkNewUnlocks();
     }
   });
@@ -131,70 +135,16 @@ function checkUIHit(x, y) {
     if (result.success) {
       Score.current -= result.cost;
 
-      if (storeHit === 'colorBomb') {
-        activateColorBomb();
-      } else if (storeHit === 'cupExtend') {
+      if (storeHit === 'cupExtend') {
         applyNewCupExtension();
       }
+      // colorBomb just queues the bomb for next drop (handled in drop logic)
 
       Audio.playMerge(5, 1); // satisfying purchase sound
       return true;
     }
   }
   return false;
-}
-
-// ── Color Bomb ──────────────────────────────────────────────────
-function activateColorBomb() {
-  // Find the tier with the most balls on screen
-  const tierCounts = new Map();
-  for (const { tierIndex } of Balls.getAll().values()) {
-    tierCounts.set(tierIndex, (tierCounts.get(tierIndex) || 0) + 1);
-  }
-
-  // Find tier with most balls (at least 2 to be useful)
-  let bestTier = -1;
-  let bestCount = 1;
-  for (const [tier, count] of tierCounts) {
-    if (count > bestCount && tier < BALL_TIERS.length - 1) {
-      bestTier = tier;
-      bestCount = count;
-    }
-  }
-
-  if (bestTier === -1) {
-    // No valid tier found, refund by not consuming
-    Store.consumeColorBomb();
-    return;
-  }
-
-  // Gather all balls of this tier
-  const targets = [];
-  for (const [id, { body, tierIndex }] of Balls.getAll()) {
-    if (tierIndex === bestTier) {
-      targets.push({ id, body, tierIndex });
-    }
-  }
-
-  // Merge them in pairs
-  const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
-  const midY = targets.reduce((s, t) => s + t.body.position.y, 0) / targets.length;
-
-  // Emit big visual effect at center
-  Particles.emitMerge(midX, midY, bestTier + 1, 3);
-
-  const pairs = Math.floor(targets.length / 2);
-  for (let i = 0; i < pairs; i++) {
-    const a = targets[i * 2];
-    const b = targets[i * 2 + 1];
-    const points = Balls.forceColorBombMerge(a.id, b.id);
-    if (points > 0) {
-      Score.addPoints(points);
-    }
-  }
-  // If odd, last ball remains
-
-  Store.consumeColorBomb();
 }
 
 // ── Cup Extension ───────────────────────────────────────────────
@@ -213,8 +163,10 @@ function updateDangerLevel() {
   let maxDanger = 0;
   const effectiveDangerY = getEffectiveDangerY();
 
-  for (const { body } of Balls.getAll().values()) {
+  for (const entry of Balls.getAll().values()) {
+    const { body } = entry;
     if (body.isMerging) continue;
+    if (entry.isBomb) continue; // bomb balls don't contribute to danger
     if (now - body.createdAt < 1500) continue;
 
     const tierRadius = BALL_TIERS[body.tierIndex].radius;
@@ -246,12 +198,20 @@ function loop(timestamp) {
       Input.state.dropRequested = false;
       const now = performance.now();
       if (now - lastDropTime >= DROP_COOLDOWN_MS) {
-        Balls.spawnBall(Input.state.pointerX, currentDropTier);
-        Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
-        Audio.playDrop(currentDropTier);
+        if (Store.isBombQueued()) {
+          // Drop a bomb ball instead of normal
+          Balls.spawnBombBall(Input.state.pointerX);
+          Particles.emitSpawnPop(Input.state.pointerX, 120, 0);
+          Audio.playDrop(7); // deeper sound for bomb
+          Store.consumeBombQueue();
+        } else {
+          Balls.spawnBall(Input.state.pointerX, currentDropTier);
+          Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
+          Audio.playDrop(currentDropTier);
 
-        currentDropTier = nextDropTier;
-        nextDropTier = Balls.getNextDropTier();
+          currentDropTier = nextDropTier;
+          nextDropTier = Balls.getNextDropTier();
+        }
         lastDropTime = now;
       }
     }
@@ -322,6 +282,7 @@ function loop(timestamp) {
     isDragging: Input.state.isDragging,
     isTouchDevice: Input.getIsTouchDevice(),
     muted: Audio.isMuted(),
+    bombQueued: Store.isBombQueued(),
     cupExtendPx: Store.getCupExtendPx(),
     storePrices: {
       colorBomb: Store.getPrice('colorBomb'),
@@ -346,7 +307,7 @@ function resetGame() {
   won = false;
   lastDropTime = performance.now();
   dangerLevel = 0;
-  previouslyUnlocked = new Set([0, 1, 2, 3, 4]);
+  previouslyUnlocked = new Set([0, 1, 2, 3]);
   Audio.startDangerHum();
 }
 

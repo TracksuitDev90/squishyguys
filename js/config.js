@@ -25,26 +25,26 @@ export const BALL_FRICTION = 0.05;
 export const BALL_DENSITY = 0.002;
 
 // Ball tiers — index 0 is smallest
-// Merge rule: 2 of same → 1 of next (except chrome → rainbow needs 3)
+// Merge rule: 2 of same → 1 of next tier
 export const BALL_TIERS = [
-  { name: 'white',   radius: 14, color: '#F5F5F5', stroke: '#CCCCCC', points: 1,  mergeCount: 1 },
-  { name: 'red',     radius: 19, color: '#E74C3C', stroke: '#C0392B', points: 3,  mergeCount: 2 },
-  { name: 'yellow',  radius: 25, color: '#F1C40F', stroke: '#D4AC0D', points: 6,  mergeCount: 2 },
-  { name: 'orange',  radius: 32, color: '#E67E22', stroke: '#CA6F1E', points: 10, mergeCount: 2 },
-  { name: 'green',   radius: 40, color: '#2ECC71', stroke: '#27AE60', points: 15, mergeCount: 2 },
-  { name: 'blue',    radius: 48, color: '#3498DB', stroke: '#2980B9', points: 21, mergeCount: 2 },
-  { name: 'indigo',  radius: 57, color: '#6C3483', stroke: '#5B2C6F', points: 28, mergeCount: 2 },
-  { name: 'violet',  radius: 67, color: '#A569BD', stroke: '#8E44AD', points: 36, mergeCount: 2 },
-  { name: 'chrome',  radius: 78, color: '#BDC3C7', stroke: '#95A5A6', points: 45, mergeCount: 3 },
-  { name: 'rainbow', radius: 90, color: 'rainbow', stroke: '#888888', points: 100, mergeCount: 0 },
+  { name: 'white',   radius: 14, color: '#F5F5F5', stroke: '#CCCCCC', points: 1  },
+  { name: 'red',     radius: 19, color: '#E74C3C', stroke: '#C0392B', points: 3  },
+  { name: 'yellow',  radius: 25, color: '#F1C40F', stroke: '#D4AC0D', points: 6  },
+  { name: 'orange',  radius: 32, color: '#E67E22', stroke: '#CA6F1E', points: 10 },
+  { name: 'green',   radius: 40, color: '#2ECC71', stroke: '#27AE60', points: 15 },
+  { name: 'blue',    radius: 48, color: '#3498DB', stroke: '#2980B9', points: 21 },
+  { name: 'indigo',  radius: 57, color: '#6C3483', stroke: '#5B2C6F', points: 28 },
+  { name: 'violet',  radius: 67, color: '#A569BD', stroke: '#8E44AD', points: 36 },
+  { name: 'chrome',  radius: 78, color: '#BDC3C7', stroke: '#95A5A6', points: 45 },
+  { name: 'rainbow', radius: 90, color: 'rainbow', stroke: '#888888', points: 100 },
 ];
 
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
-// Weight decreases as tier increases.
-export const DROP_WEIGHTS = [50, 30, 15, 8, 4, 0, 0, 0, 0, 0];
+// Higher tiers drop less frequently. Violet+ are too large to drop.
+export const DROP_WEIGHTS = [50, 30, 15, 8, 4, 2, 1, 0, 0, 0];
 
-// Maximum tier index that can appear as a drop (the rest must be earned)
-export const MAX_INITIAL_DROP_TIER = 4; // green
+// Maximum tier that can ever appear as a drop (indigo = 6). Violet+ must be earned.
+export const MAX_DROP_TIER = 6;
 
 // Squish visual settings
 export const SQUISH_FACTOR = 0.15; // how much velocity affects squish visual
