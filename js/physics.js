@@ -12,6 +12,7 @@ const { Engine, World, Bodies, Body, Events, Composite } = Matter;
 let engine;
 let collisionCallback = null;
 let wallCollisionCallback = null;
+let cupBodies = [];
 
 export function init() {
   engine = Engine.create({
@@ -85,15 +86,85 @@ function buildCup() {
     { ...wallOptions, label: 'boundary' }
   );
 
-  Composite.add(engine.world, [leftWall, rightWall, floor, leftCeiling, rightCeiling]);
+  cupBodies = [leftWall, rightWall, floor, leftCeiling, rightCeiling];
+  Composite.add(engine.world, cupBodies);
+}
+
+// ── Cup Extension (rebuild walls taller) ────────────────────────
+export function extendCup(totalExtendPx) {
+  // Remove old cup bodies
+  for (const b of cupBodies) {
+    Composite.remove(engine.world, b);
+  }
+  cupBodies = [];
+
+  const wallOptions = {
+    isStatic: true,
+    friction: 0.3,
+    restitution: 0.2,
+    render: { visible: false },
+    label: 'cup-wall',
+  };
+
+  const effectiveTopY = CUP_TOP_Y - totalExtendPx;
+  const wallHeight = CUP_BOTTOM_Y - effectiveTopY + 60;
+  const wallCenterY = effectiveTopY + wallHeight / 2 - 30;
+
+  const leftWall = Bodies.rectangle(
+    CUP_LEFT_X - CUP_WALL_THICKNESS / 2, wallCenterY,
+    CUP_WALL_THICKNESS, wallHeight, wallOptions
+  );
+  const rightWall = Bodies.rectangle(
+    CUP_RIGHT_X + CUP_WALL_THICKNESS / 2, wallCenterY,
+    CUP_WALL_THICKNESS, wallHeight, wallOptions
+  );
+  const floor = Bodies.rectangle(
+    (CUP_LEFT_X + CUP_RIGHT_X) / 2,
+    CUP_BOTTOM_Y + CUP_WALL_THICKNESS / 2,
+    CUP_RIGHT_X - CUP_LEFT_X + CUP_WALL_THICKNESS * 2,
+    CUP_WALL_THICKNESS, wallOptions
+  );
+  const leftCeiling = Bodies.rectangle(
+    CUP_LEFT_X / 2, effectiveTopY - 80,
+    CUP_LEFT_X, 20,
+    { ...wallOptions, label: 'boundary' }
+  );
+  const rightCeiling = Bodies.rectangle(
+    CUP_RIGHT_X + (GAME_WIDTH - CUP_RIGHT_X) / 2, effectiveTopY - 80,
+    GAME_WIDTH - CUP_RIGHT_X, 20,
+    { ...wallOptions, label: 'boundary' }
+  );
+
+  cupBodies = [leftWall, rightWall, floor, leftCeiling, rightCeiling];
+  Composite.add(engine.world, cupBodies);
+}
+
+export function resetCup() {
+  // Remove extended cup and rebuild default
+  for (const b of cupBodies) {
+    Composite.remove(engine.world, b);
+  }
+  cupBodies = [];
+  buildCup();
 }
 
 // ── Ball Creation ───────────────────────────────────────────────
 export function createBallBody(x, y, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
+
+  // Smaller balls (white, red, yellow, orange) are squishier/gooier —
+  // slightly less friction so they slide between others better
+  let friction = BALL_FRICTION;
+  let restitution = BALL_RESTITUTION;
+  if (tierIndex <= 3) {
+    const squishiness = 1 - (tierIndex / 3); // 1.0 for white, 0 for orange
+    friction = BALL_FRICTION * (0.4 + 0.6 * (1 - squishiness)); // white=0.02, orange=0.05
+    restitution = BALL_RESTITUTION + squishiness * 0.15; // white=0.45, orange=0.3
+  }
+
   const body = Bodies.circle(x, y, tier.radius, {
-    restitution: BALL_RESTITUTION,
-    friction: BALL_FRICTION,
+    restitution,
+    friction,
     density: BALL_DENSITY,
     label: 'ball',
   });

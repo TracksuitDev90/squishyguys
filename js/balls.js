@@ -154,7 +154,9 @@ function performMerge(bodies, tierIndex) {
 }
 
 // ── Game Over Check ─────────────────────────────────────────────
-export function checkGameOver() {
+// dangerY can be passed in to account for cup extensions
+export function checkGameOver(dangerY) {
+  const effectiveDangerY = dangerY != null ? dangerY : DANGER_LINE_Y;
   const now = performance.now();
   for (const { body } of activeBalls.values()) {
     if (body.isMerging) continue;
@@ -162,7 +164,7 @@ export function checkGameOver() {
     // Ignore recently spawned balls (give them time to fall)
     if (now - body.createdAt < 1500) continue;
 
-    if (body.position.y - BALL_TIERS[body.tierIndex].radius < DANGER_LINE_Y) {
+    if (body.position.y - BALL_TIERS[body.tierIndex].radius < effectiveDangerY) {
       if (!body.aboveDangerSince) {
         body.aboveDangerSince = now;
       } else if (now - body.aboveDangerSince > DANGER_DURATION_MS) {
@@ -173,6 +175,19 @@ export function checkGameOver() {
     }
   }
   return false;
+}
+
+// ── Color Bomb Merge (force merge two specific balls) ───────────
+export function forceColorBombMerge(idA, idB) {
+  const ballA = activeBalls.get(idA);
+  const ballB = activeBalls.get(idB);
+  if (!ballA || !ballB) return 0;
+  if (ballA.tierIndex !== ballB.tierIndex) return 0;
+
+  const tierIndex = ballA.tierIndex;
+  if (tierIndex >= BALL_TIERS.length - 1) return 0;
+
+  return performMerge([ballA.body, ballB.body], tierIndex);
 }
 
 // ── Rainbow Check ───────────────────────────────────────────────

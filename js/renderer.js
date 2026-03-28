@@ -7,6 +7,12 @@ import {
 } from './config.js';
 import * as Particles from './particles.js';
 
+// Store button layout
+const STORE_BUTTONS = [
+  { id: 'colorBomb', x: 58, y: 145, w: 130, h: 30 },
+  { id: 'cupExtend', x: 212, y: 145, w: 130, h: 30 },
+];
+
 let canvas, ctx;
 let wobbleSeeds = [];
 
@@ -56,10 +62,12 @@ export function render(state) {
 
   ctx.clearRect(-20, -20, GAME_WIDTH + 40, GAME_HEIGHT + 40);
 
+  const cupExt = state.cupExtendPx || 0;
+
   drawBackground();
-  drawDangerZone(state.dangerLevel);
-  drawCup();
-  drawDangerLine(state.dangerLevel);
+  drawDangerZone(state.dangerLevel, cupExt);
+  drawCup(cupExt);
+  drawDangerLine(state.dangerLevel, cupExt);
   drawBalls(state.balls, state.gameState);
   Particles.draw(ctx);
 
@@ -70,6 +78,10 @@ export function render(state) {
 
   drawScore(state.score, state.highScore, state.combo);
   drawMuteButton(state.muted);
+
+  if (state.gameState === 'playing') {
+    drawStoreButtons(state.storePrices, state.storeAffordable);
+  }
 
   if (state.gameState === 'gameover') {
     drawGameOver(state.score, state.highScore, state.won);
@@ -83,7 +95,7 @@ function drawBackground() {
   const grad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
   grad.addColorStop(0, '#1a1a2e');
   grad.addColorStop(0.5, '#16213e');
-  grad.addColorStop(1, '#0f3460');
+  grad.addColorStop(1, '#1a4a7a');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
@@ -105,18 +117,19 @@ function drawBackground() {
 }
 
 // ── Danger Zone (red glow when approaching game over) ───────────
-function drawDangerZone(dangerLevel) {
+function drawDangerZone(dangerLevel, cupExt) {
   if (dangerLevel <= 0) return;
 
+  const effectiveTopY = CUP_TOP_Y - (cupExt || 0);
   const pulse = Math.sin(performance.now() * 0.008) * 0.3 + 0.7;
   const alpha = dangerLevel * 0.25 * pulse;
 
   // Red vignette at top of cup
-  const grad = ctx.createLinearGradient(0, CUP_TOP_Y - 40, 0, CUP_TOP_Y + 80);
+  const grad = ctx.createLinearGradient(0, effectiveTopY - 40, 0, effectiveTopY + 80);
   grad.addColorStop(0, `rgba(231, 76, 60, ${alpha})`);
   grad.addColorStop(1, 'rgba(231, 76, 60, 0)');
   ctx.fillStyle = grad;
-  ctx.fillRect(CUP_LEFT_X - 10, CUP_TOP_Y - 40, CUP_RIGHT_X - CUP_LEFT_X + 20, 120);
+  ctx.fillRect(CUP_LEFT_X - 10, effectiveTopY - 40, CUP_RIGHT_X - CUP_LEFT_X + 20, 120);
 
   // Side edge glow
   const edgeAlpha = dangerLevel * 0.15 * pulse;
@@ -125,13 +138,14 @@ function drawDangerZone(dangerLevel) {
 }
 
 // ── Cup ─────────────────────────────────────────────────────────
-function drawCup() {
+function drawCup(cupExt) {
   ctx.save();
 
-  const leftTop = { x: CUP_LEFT_X, y: CUP_TOP_Y - 20 };
+  const effectiveTopY = CUP_TOP_Y - (cupExt || 0);
+  const leftTop = { x: CUP_LEFT_X, y: effectiveTopY - 20 };
   const leftBot = { x: CUP_LEFT_X, y: CUP_BOTTOM_Y };
   const rightBot = { x: CUP_RIGHT_X, y: CUP_BOTTOM_Y };
-  const rightTop = { x: CUP_RIGHT_X, y: CUP_TOP_Y - 20 };
+  const rightTop = { x: CUP_RIGHT_X, y: effectiveTopY - 20 };
 
   // Outer glow
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
@@ -193,18 +207,19 @@ function drawWobblyLine(x1, y1, x2, y2, seedOffset) {
 }
 
 // ── Danger Line ─────────────────────────────────────────────────
-function drawDangerLine(dangerLevel) {
-  const alpha = 0.2 + (dangerLevel || 0) * 0.4;
+function drawDangerLine(dangerLevel, cupExt) {
+  const alpha = 0.35 + (dangerLevel || 0) * 0.5;
   const dashOffset = (performance.now() * 0.02) % 16;
+  const effectiveDangerY = DANGER_LINE_Y - (cupExt || 0);
 
   ctx.save();
   ctx.setLineDash([8, 8]);
   ctx.lineDashOffset = -dashOffset;
-  ctx.strokeStyle = `rgba(231, 76, 60, ${alpha})`;
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = `rgba(255, 50, 30, ${Math.min(alpha, 1)})`;
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(CUP_LEFT_X + 5, DANGER_LINE_Y);
-  ctx.lineTo(CUP_RIGHT_X - 5, DANGER_LINE_Y);
+  ctx.moveTo(CUP_LEFT_X + 5, effectiveDangerY);
+  ctx.lineTo(CUP_RIGHT_X - 5, effectiveDangerY);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.restore();
@@ -270,8 +285,11 @@ function drawBall(body, tierIndex, gameState) {
     const vy = body.velocity.y;
     const speed = Math.sqrt(vx * vx + vy * vy);
 
+    // Smaller balls (white, red, yellow, orange) are gooier — more squish
+    const gooFactor = tierIndex <= 3 ? 1 + (3 - tierIndex) * 0.25 : 1; // white=1.75, red=1.5, yellow=1.25, orange=1.0
+
     // Collision squish: compress on impact
-    const impactSquish = Math.min(speed * 0.012, 0.3);
+    const impactSquish = Math.min(speed * 0.012 * gooFactor, 0.35);
     const angle = Math.atan2(Math.abs(vy), Math.abs(vx) + 0.001);
     const verticalness = angle / (Math.PI / 2); // 0=horizontal, 1=vertical
 
@@ -284,14 +302,16 @@ function drawBall(body, tierIndex, gameState) {
       sq.targetSY = 1 + impactSquish * (1 - verticalness) * 0.3;
     }
 
-    // Spring back to 1,1 (jelly recovery)
-    sq.scaleX += (sq.targetSX - sq.scaleX) * 0.15;
-    sq.scaleY += (sq.targetSY - sq.scaleY) * 0.15;
+    // Spring back to 1,1 (jelly recovery) — gooier balls recover slower
+    const recovery = tierIndex <= 3 ? 0.15 - (3 - tierIndex) * 0.02 : 0.15; // white=0.09, larger=0.15
+    sq.scaleX += (sq.targetSX - sq.scaleX) * recovery;
+    sq.scaleY += (sq.targetSY - sq.scaleY) * recovery;
 
-    // Idle wobble (subtle breathing)
+    // Idle wobble (subtle breathing) — gooier balls wobble more
+    const wobbleAmp = tierIndex <= 3 ? 0.008 + (3 - tierIndex) * 0.004 : 0.008; // white=0.02, larger=0.008
     const wobbleTime = performance.now() * 0.002 + body.id * 1.7;
-    sq.scaleX += Math.sin(wobbleTime) * 0.008;
-    sq.scaleY += Math.cos(wobbleTime * 1.3) * 0.008;
+    sq.scaleX += Math.sin(wobbleTime) * wobbleAmp;
+    sq.scaleY += Math.cos(wobbleTime * 1.3) * wobbleAmp;
   }
 
   ctx.save();
@@ -782,6 +802,73 @@ function drawGameOver(score, highScore, won) {
   ctx.fillText('Tap to play again', cx, cy + 95);
 
   ctx.restore();
+}
+
+// ── Store Buttons ───────────────────────────────────────────────
+function drawStoreButtons(prices, affordable) {
+  if (!prices) return;
+
+  for (const btn of STORE_BUTTONS) {
+    const price = prices[btn.id];
+    const canBuy = affordable[btn.id];
+
+    ctx.save();
+
+    // Button background
+    const bgAlpha = canBuy ? 0.18 : 0.08;
+    const borderAlpha = canBuy ? 0.4 : 0.15;
+    ctx.fillStyle = canBuy
+      ? `rgba(46, 204, 113, ${bgAlpha})`
+      : `rgba(255, 255, 255, ${bgAlpha})`;
+    ctx.strokeStyle = canBuy
+      ? `rgba(46, 204, 113, ${borderAlpha})`
+      : `rgba(255, 255, 255, ${borderAlpha})`;
+    ctx.lineWidth = 1.5;
+
+    // Rounded rect
+    const r = 6;
+    ctx.beginPath();
+    ctx.moveTo(btn.x + r, btn.y);
+    ctx.lineTo(btn.x + btn.w - r, btn.y);
+    ctx.quadraticCurveTo(btn.x + btn.w, btn.y, btn.x + btn.w, btn.y + r);
+    ctx.lineTo(btn.x + btn.w, btn.y + btn.h - r);
+    ctx.quadraticCurveTo(btn.x + btn.w, btn.y + btn.h, btn.x + btn.w - r, btn.y + btn.h);
+    ctx.lineTo(btn.x + r, btn.y + btn.h);
+    ctx.quadraticCurveTo(btn.x, btn.y + btn.h, btn.x, btn.y + btn.h - r);
+    ctx.lineTo(btn.x, btn.y + r);
+    ctx.quadraticCurveTo(btn.x, btn.y, btn.x + r, btn.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Label
+    const label = btn.id === 'colorBomb' ? '\u25C9 BOMB' : '\u2B06 CUP+';
+    const textAlpha = canBuy ? 0.85 : 0.35;
+    ctx.font = 'bold 12px "Patrick Hand", cursive';
+    ctx.fillStyle = `rgba(255, 255, 255, ${textAlpha})`;
+    ctx.textAlign = 'left';
+    ctx.fillText(label, btn.x + 8, btn.y + 20);
+
+    // Price
+    ctx.textAlign = 'right';
+    ctx.font = '12px "Patrick Hand", cursive';
+    ctx.fillStyle = canBuy
+      ? `rgba(46, 204, 113, ${textAlpha})`
+      : `rgba(255, 255, 255, ${textAlpha * 0.7})`;
+    ctx.fillText(`${price}pts`, btn.x + btn.w - 8, btn.y + 20);
+
+    ctx.restore();
+  }
+}
+
+export function checkStoreButtonHit(x, y) {
+  for (const btn of STORE_BUTTONS) {
+    if (x >= btn.x && x <= btn.x + btn.w &&
+        y >= btn.y && y <= btn.y + btn.h) {
+      return btn.id;
+    }
+  }
+  return null;
 }
 
 // ── Color Utilities ─────────────────────────────────────────────
