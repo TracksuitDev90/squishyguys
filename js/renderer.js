@@ -285,8 +285,11 @@ function drawBall(body, tierIndex, gameState) {
     const vy = body.velocity.y;
     const speed = Math.sqrt(vx * vx + vy * vy);
 
+    // Smaller balls (white, red, yellow, orange) are gooier — more squish
+    const gooFactor = tierIndex <= 3 ? 1 + (3 - tierIndex) * 0.25 : 1; // white=1.75, red=1.5, yellow=1.25, orange=1.0
+
     // Collision squish: compress on impact
-    const impactSquish = Math.min(speed * 0.012, 0.3);
+    const impactSquish = Math.min(speed * 0.012 * gooFactor, 0.35);
     const angle = Math.atan2(Math.abs(vy), Math.abs(vx) + 0.001);
     const verticalness = angle / (Math.PI / 2); // 0=horizontal, 1=vertical
 
@@ -299,14 +302,16 @@ function drawBall(body, tierIndex, gameState) {
       sq.targetSY = 1 + impactSquish * (1 - verticalness) * 0.3;
     }
 
-    // Spring back to 1,1 (jelly recovery)
-    sq.scaleX += (sq.targetSX - sq.scaleX) * 0.15;
-    sq.scaleY += (sq.targetSY - sq.scaleY) * 0.15;
+    // Spring back to 1,1 (jelly recovery) — gooier balls recover slower
+    const recovery = tierIndex <= 3 ? 0.15 - (3 - tierIndex) * 0.02 : 0.15; // white=0.09, larger=0.15
+    sq.scaleX += (sq.targetSX - sq.scaleX) * recovery;
+    sq.scaleY += (sq.targetSY - sq.scaleY) * recovery;
 
-    // Idle wobble (subtle breathing)
+    // Idle wobble (subtle breathing) — gooier balls wobble more
+    const wobbleAmp = tierIndex <= 3 ? 0.008 + (3 - tierIndex) * 0.004 : 0.008; // white=0.02, larger=0.008
     const wobbleTime = performance.now() * 0.002 + body.id * 1.7;
-    sq.scaleX += Math.sin(wobbleTime) * 0.008;
-    sq.scaleY += Math.cos(wobbleTime * 1.3) * 0.008;
+    sq.scaleX += Math.sin(wobbleTime) * wobbleAmp;
+    sq.scaleY += Math.cos(wobbleTime * 1.3) * wobbleAmp;
   }
 
   ctx.save();

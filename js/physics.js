@@ -151,9 +151,20 @@ export function resetCup() {
 // ── Ball Creation ───────────────────────────────────────────────
 export function createBallBody(x, y, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
+
+  // Smaller balls (white, red, yellow, orange) are squishier/gooier —
+  // slightly less friction so they slide between others better
+  let friction = BALL_FRICTION;
+  let restitution = BALL_RESTITUTION;
+  if (tierIndex <= 3) {
+    const squishiness = 1 - (tierIndex / 3); // 1.0 for white, 0 for orange
+    friction = BALL_FRICTION * (0.4 + 0.6 * (1 - squishiness)); // white=0.02, orange=0.05
+    restitution = BALL_RESTITUTION + squishiness * 0.15; // white=0.45, orange=0.3
+  }
+
   const body = Bodies.circle(x, y, tier.radius, {
-    restitution: BALL_RESTITUTION,
-    friction: BALL_FRICTION,
+    restitution,
+    friction,
     density: BALL_DENSITY,
     label: 'ball',
   });
