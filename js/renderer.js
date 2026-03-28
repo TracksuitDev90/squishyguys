@@ -1,19 +1,22 @@
-// ── Canvas Renderer (Hand-drawn aesthetic) ──────────────────────
+// ── Canvas Renderer (Hand-drawn aesthetic + Juice) ──────────────
 import {
   GAME_WIDTH, GAME_HEIGHT,
   CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y,
   CUP_WALL_THICKNESS, DANGER_LINE_Y, DROP_Y,
   BALL_TIERS, SQUISH_FACTOR,
 } from './config.js';
+import * as Particles from './particles.js';
 
 let canvas, ctx;
-let wobbleSeeds = []; // Per-wall wobble offsets (stable per frame)
+let wobbleSeeds = [];
+
+// Per-ball squish state (keyed by body.id)
+const ballSquish = new Map();
 
 export function init(canvasEl) {
   canvas = canvasEl;
   ctx = canvas.getContext('2d');
 
-  // Generate stable wobble seeds for cup walls
   for (let i = 0; i < 100; i++) {
     wobbleSeeds.push((Math.random() - 0.5) * 3);
   }
@@ -27,7 +30,6 @@ function handleResize() {
   const maxW = window.innerWidth;
   const maxH = window.innerHeight;
 
-  // Maintain aspect ratio
   const aspect = GAME_WIDTH / GAME_HEIGHT;
   let w, h;
   if (maxW / maxH < aspect) {
@@ -45,30 +47,36 @@ function handleResize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-export function getContext() {
-  return ctx;
-}
-
 // ── Main Render ─────────────────────────────────────────────────
 export function render(state) {
-  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  const shake = Particles.getScreenShake();
+
+  ctx.save();
+  ctx.translate(shake.x, shake.y);
+
+  ctx.clearRect(-20, -20, GAME_WIDTH + 40, GAME_HEIGHT + 40);
 
   drawBackground();
+  drawDangerZone(state.dangerLevel);
   drawCup();
-  drawDangerLine();
-  drawBalls(state.balls);
-  drawMergeEffects(state.mergeEffects);
+  drawDangerLine(state.dangerLevel);
+  drawBalls(state.balls, state.gameState);
+  Particles.draw(ctx);
 
   if (state.gameState === 'playing') {
-    drawPreview(state.previewX, state.previewTier);
+    drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice);
     drawDropLine(state.previewX);
+    drawNextBall(state.nextTier);
   }
 
   drawScore(state.score, state.highScore, state.combo);
+  drawMuteButton(state.muted);
 
   if (state.gameState === 'gameover') {
     drawGameOver(state.score, state.highScore, state.won);
   }
+
+  ctx.restore();
 }
 
 // ── Background ──────────────────────────────────────────────────
@@ -80,43 +88,57 @@ function drawBackground() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-  // Subtle dot pattern
-  ctx.fillStyle = 'rgba(255,255,255,0.02)';
-  for (let x = 0; x < GAME_WIDTH; x += 20) {
-    for (let y = 0; y < GAME_HEIGHT; y += 20) {
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  // Subtle grid pattern (cheaper than dots)
+  ctx.strokeStyle = 'rgba(255,255,255,0.015)';
+  ctx.lineWidth = 0.5;
+  for (let x = 0; x < GAME_WIDTH; x += 30) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, GAME_HEIGHT);
+    ctx.stroke();
   }
+  for (let y = 0; y < GAME_HEIGHT; y += 30) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(GAME_WIDTH, y);
+    ctx.stroke();
+  }
+}
+
+// ── Danger Zone (red glow when approaching game over) ───────────
+function drawDangerZone(dangerLevel) {
+  if (dangerLevel <= 0) return;
+
+  const pulse = Math.sin(performance.now() * 0.008) * 0.3 + 0.7;
+  const alpha = dangerLevel * 0.25 * pulse;
+
+  // Red vignette at top of cup
+  const grad = ctx.createLinearGradient(0, CUP_TOP_Y - 40, 0, CUP_TOP_Y + 80);
+  grad.addColorStop(0, `rgba(231, 76, 60, ${alpha})`);
+  grad.addColorStop(1, 'rgba(231, 76, 60, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(CUP_LEFT_X - 10, CUP_TOP_Y - 40, CUP_RIGHT_X - CUP_LEFT_X + 20, 120);
+
+  // Side edge glow
+  const edgeAlpha = dangerLevel * 0.15 * pulse;
+  ctx.fillStyle = `rgba(231, 76, 60, ${edgeAlpha})`;
+  ctx.fillRect(0, 0, GAME_WIDTH, 8);
 }
 
 // ── Cup ─────────────────────────────────────────────────────────
 function drawCup() {
   ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.lineWidth = CUP_WALL_THICKNESS;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
 
-  // Draw cup as a U-shape with wobbly lines
-  ctx.beginPath();
-
-  // Left wall top to bottom
-  const steps = 20;
   const leftTop = { x: CUP_LEFT_X, y: CUP_TOP_Y - 20 };
   const leftBot = { x: CUP_LEFT_X, y: CUP_BOTTOM_Y };
   const rightBot = { x: CUP_RIGHT_X, y: CUP_BOTTOM_Y };
   const rightTop = { x: CUP_RIGHT_X, y: CUP_TOP_Y - 20 };
 
-  // Draw wobbly U-shape
-  drawWobblyLine(leftTop.x, leftTop.y, leftBot.x, leftBot.y, 0);
-  drawWobblyLine(leftBot.x, leftBot.y, rightBot.x, rightBot.y, 20);
-  drawWobblyLine(rightBot.x, rightBot.y, rightTop.x, rightTop.y, 40);
-
-  // Inner glow
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = CUP_WALL_THICKNESS + 8;
+  // Outer glow
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = CUP_WALL_THICKNESS + 12;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   ctx.beginPath();
   ctx.moveTo(leftTop.x, leftTop.y);
   ctx.lineTo(leftBot.x, leftBot.y);
@@ -124,17 +146,47 @@ function drawCup() {
   ctx.lineTo(rightTop.x, rightTop.y);
   ctx.stroke();
 
+  // Inner glow
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = CUP_WALL_THICKNESS + 6;
+  ctx.beginPath();
+  ctx.moveTo(leftTop.x, leftTop.y);
+  ctx.lineTo(leftBot.x, leftBot.y);
+  ctx.lineTo(rightBot.x, rightBot.y);
+  ctx.lineTo(rightTop.x, rightTop.y);
+  ctx.stroke();
+
+  // Main walls (wobbly)
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = CUP_WALL_THICKNESS;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  drawWobblyLine(leftTop.x, leftTop.y, leftBot.x, leftBot.y, 0);
+  drawWobblyLine(leftBot.x, leftBot.y, rightBot.x, rightBot.y, 20);
+  drawWobblyLine(rightBot.x, rightBot.y, rightTop.x, rightTop.y, 40);
+
+  // Highlight edge (thin bright line on inside)
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(leftTop.x + CUP_WALL_THICKNESS / 2, leftTop.y);
+  ctx.lineTo(leftBot.x + CUP_WALL_THICKNESS / 2, leftBot.y - 2);
+  ctx.lineTo(rightBot.x - CUP_WALL_THICKNESS / 2, rightBot.y - 2);
+  ctx.lineTo(rightTop.x - CUP_WALL_THICKNESS / 2, rightTop.y);
+  ctx.stroke();
+
   ctx.restore();
 }
 
 function drawWobblyLine(x1, y1, x2, y2, seedOffset) {
-  const segments = 10;
+  const segments = 12;
   ctx.beginPath();
   ctx.moveTo(x1 + wobbleSeeds[seedOffset] * 0.5, y1);
 
   for (let i = 1; i <= segments; i++) {
     const t = i / segments;
-    const x = x1 + (x2 - x1) * t + wobbleSeeds[seedOffset + i] * 0.8;
+    const x = x1 + (x2 - x1) * t + wobbleSeeds[(seedOffset + i) % 100] * 0.8;
     const y = y1 + (y2 - y1) * t + wobbleSeeds[(seedOffset + i + 5) % 100] * 0.8;
     ctx.lineTo(x, y);
   }
@@ -142,10 +194,14 @@ function drawWobblyLine(x1, y1, x2, y2, seedOffset) {
 }
 
 // ── Danger Line ─────────────────────────────────────────────────
-function drawDangerLine() {
+function drawDangerLine(dangerLevel) {
+  const alpha = 0.2 + (dangerLevel || 0) * 0.4;
+  const dashOffset = (performance.now() * 0.02) % 16;
+
   ctx.save();
   ctx.setLineDash([8, 8]);
-  ctx.strokeStyle = 'rgba(231, 76, 60, 0.3)';
+  ctx.lineDashOffset = -dashOffset;
+  ctx.strokeStyle = `rgba(231, 76, 60, ${alpha})`;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(CUP_LEFT_X + 5, DANGER_LINE_Y);
@@ -158,8 +214,11 @@ function drawDangerLine() {
 // ── Drop guide line ─────────────────────────────────────────────
 function drawDropLine(x) {
   ctx.save();
+  const grad = ctx.createLinearGradient(0, DROP_Y + 20, 0, CUP_BOTTOM_Y);
+  grad.addColorStop(0, 'rgba(255,255,255,0.12)');
+  grad.addColorStop(1, 'rgba(255,255,255,0.02)');
   ctx.setLineDash([4, 8]);
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.strokeStyle = grad;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(x, DROP_Y + 20);
@@ -170,98 +229,243 @@ function drawDropLine(x) {
 }
 
 // ── Balls ───────────────────────────────────────────────────────
-function drawBalls(ballMap) {
-  for (const [id, { body, tierIndex }] of ballMap) {
-    drawBall(body, tierIndex);
+function drawBalls(ballMap, gameState) {
+  // Sort by y position so lower balls draw on top (depth feel)
+  const sorted = [...ballMap.values()].sort((a, b) => a.body.position.y - b.body.position.y);
+
+  for (const { body, tierIndex } of sorted) {
+    drawBall(body, tierIndex, gameState);
   }
 }
 
-function drawBall(body, tierIndex) {
+function getSquishState(body) {
+  if (!ballSquish.has(body.id)) {
+    ballSquish.set(body.id, {
+      scaleX: 0.3, // Start small for spawn animation
+      scaleY: 0.3,
+      targetSX: 1,
+      targetSY: 1,
+      spawnProgress: 0,
+    });
+  }
+  return ballSquish.get(body.id);
+}
+
+function drawBall(body, tierIndex, gameState) {
   const tier = BALL_TIERS[tierIndex];
   const { x, y } = body.position;
   const r = tier.radius;
+  const sq = getSquishState(body);
 
-  // Calculate squish based on velocity
-  const vx = body.velocity.x;
-  const vy = body.velocity.y;
-  const speed = Math.sqrt(vx * vx + vy * vy);
-  const squishAmount = Math.min(speed * SQUISH_FACTOR * 0.05, 0.25);
+  // ── Spawn scale-up animation ──────────────────────────────────
+  if (sq.spawnProgress < 1) {
+    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
+    const t = easeOutBack(sq.spawnProgress);
+    sq.targetSX = 1;
+    sq.targetSY = 1;
+    sq.scaleX = t;
+    sq.scaleY = t;
+  } else {
+    // ── Velocity-based squish ────────────────────────────────────
+    const vx = body.velocity.x;
+    const vy = body.velocity.y;
+    const speed = Math.sqrt(vx * vx + vy * vy);
 
-  // Squish perpendicular to velocity direction
-  const angle = Math.atan2(vy, vx);
-  const scaleX = 1 + squishAmount;
-  const scaleY = 1 - squishAmount * 0.6;
+    // Collision squish: compress on impact
+    const impactSquish = Math.min(speed * 0.012, 0.3);
+    const angle = Math.atan2(Math.abs(vy), Math.abs(vx) + 0.001);
+    const verticalness = angle / (Math.PI / 2); // 0=horizontal, 1=vertical
+
+    sq.targetSX = 1 + impactSquish * verticalness;
+    sq.targetSY = 1 - impactSquish * verticalness;
+
+    // Also squish horizontally on horizontal impacts
+    if (verticalness < 0.5) {
+      sq.targetSX = 1 - impactSquish * (1 - verticalness) * 0.5;
+      sq.targetSY = 1 + impactSquish * (1 - verticalness) * 0.3;
+    }
+
+    // Spring back to 1,1 (jelly recovery)
+    sq.scaleX += (sq.targetSX - sq.scaleX) * 0.15;
+    sq.scaleY += (sq.targetSY - sq.scaleY) * 0.15;
+
+    // Idle wobble (subtle breathing)
+    const wobbleTime = performance.now() * 0.002 + body.id * 1.7;
+    sq.scaleX += Math.sin(wobbleTime) * 0.008;
+    sq.scaleY += Math.cos(wobbleTime * 1.3) * 0.008;
+  }
 
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(angle);
-  ctx.scale(scaleX, scaleY);
-  ctx.rotate(-angle);
 
-  // Main body
-  if (tier.color === 'rainbow') {
+  // Rotate with body angle for more life
+  ctx.rotate(body.angle);
+  ctx.scale(sq.scaleX, sq.scaleY);
+
+  // ── Draw based on tier type ───────────────────────────────────
+  if (tier.name === 'rainbow') {
     drawRainbowBall(r);
+  } else if (tier.name === 'chrome') {
+    drawChromeBall(r);
   } else {
-    drawSolidBall(r, tier.color, tier.stroke);
+    drawSolidBall(r, tier.color, tier.stroke, tierIndex);
   }
 
   ctx.restore();
 }
 
-function drawSolidBall(r, fill, stroke) {
+// Clean up squish states for removed balls
+export function cleanupSquishStates(activeBallIds) {
+  for (const id of ballSquish.keys()) {
+    if (!activeBallIds.has(id)) {
+      ballSquish.delete(id);
+    }
+  }
+}
+
+// ── Solid Ball ──────────────────────────────────────────────────
+function drawSolidBall(r, fill, stroke, tierIndex) {
   // Outer glow
-  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.3);
-  glow.addColorStop(0, fill + '40');
-  glow.addColorStop(1, 'transparent');
+  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.4);
+  glow.addColorStop(0, hexWithAlpha(fill, 0.25));
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(0, 0, r * 1.3, 0, Math.PI * 2);
+  ctx.arc(0, 0, r * 1.4, 0, Math.PI * 2);
   ctx.fill();
 
-  // Main circle with gradient for 3D effect
-  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.1, 0, 0, r);
-  grad.addColorStop(0, lightenColor(fill, 40));
-  grad.addColorStop(0.5, fill);
-  grad.addColorStop(1, darkenColor(fill, 30));
+  // Main body gradient (3D sphere look)
+  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
+  grad.addColorStop(0, lightenColor(fill, 60));
+  grad.addColorStop(0.3, lightenColor(fill, 20));
+  grad.addColorStop(0.6, fill);
+  grad.addColorStop(1, darkenColor(fill, 40));
   ctx.fillStyle = grad;
 
-  // Wobbly circle outline
+  // Wobbly circle
   ctx.beginPath();
-  const points = 24;
+  const points = 32;
+  const wobbleSpeed = 0.003;
+  const wobbleAmt = 0.012 + tierIndex * 0.001;
   for (let i = 0; i <= points; i++) {
     const a = (i / points) * Math.PI * 2;
-    const wobble = 1 + Math.sin(a * 3 + performance.now() * 0.003) * 0.015;
-    const px = Math.cos(a) * r * wobble;
-    const py = Math.sin(a) * r * wobble;
+    const w = 1 + Math.sin(a * 3 + performance.now() * wobbleSpeed) * wobbleAmt
+                + Math.sin(a * 5 + performance.now() * wobbleSpeed * 1.7) * wobbleAmt * 0.5;
+    const px = Math.cos(a) * r * w;
+    const py = Math.sin(a) * r * w;
     if (i === 0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
   ctx.closePath();
   ctx.fill();
 
-  // Stroke
+  // Stroke with slight variation
   ctx.strokeStyle = stroke;
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  // Primary highlight (big soft reflection)
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
   ctx.beginPath();
-  ctx.ellipse(-r * 0.25, -r * 0.3, r * 0.35, r * 0.2, -0.5, 0, Math.PI * 2);
+  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.4, r * 0.22, -0.5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Small secondary highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  // Secondary highlight (sharp tiny dot)
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.beginPath();
-  ctx.arc(-r * 0.1, -r * 0.5, r * 0.1, 0, Math.PI * 2);
+  ctx.arc(-r * 0.15, -r * 0.42, r * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bottom shadow crescent
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.beginPath();
+  ctx.ellipse(r * 0.05, r * 0.35, r * 0.5, r * 0.18, 0.2, 0, Math.PI * 2);
   ctx.fill();
 }
 
+// ── Chrome Ball (metallic sheen) ────────────────────────────────
+function drawChromeBall(r) {
+  const time = performance.now() * 0.001;
+
+  // Outer glow
+  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.5);
+  glow.addColorStop(0, 'rgba(200,210,220,0.3)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Metallic gradient (shifts with time for living sheen)
+  const shineAngle = time * 0.5;
+  const shineX = Math.cos(shineAngle) * r * 0.3;
+  const shineY = Math.sin(shineAngle) * r * 0.3;
+
+  const grad = ctx.createRadialGradient(shineX - r * 0.2, shineY - r * 0.3, r * 0.1, 0, 0, r);
+  grad.addColorStop(0, '#FAFAFA');
+  grad.addColorStop(0.2, '#E8E8E8');
+  grad.addColorStop(0.4, '#C0C8D0');
+  grad.addColorStop(0.6, '#8899AA');
+  grad.addColorStop(0.8, '#A0ADB8');
+  grad.addColorStop(1, '#6B7B8D');
+  ctx.fillStyle = grad;
+
+  ctx.beginPath();
+  const points = 32;
+  for (let i = 0; i <= points; i++) {
+    const a = (i / points) * Math.PI * 2;
+    const w = 1 + Math.sin(a * 4 + time * 2) * 0.01;
+    ctx.lineTo(Math.cos(a) * r * w, Math.sin(a) * r * w);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Metallic edge stroke
+  ctx.strokeStyle = '#7B8C9D';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  // Moving highlight (the "sheen" that sweeps across)
+  const sweepX = Math.sin(time * 1.2) * r * 0.4;
+  const sweepGrad = ctx.createRadialGradient(sweepX, -r * 0.2, r * 0.05, sweepX, -r * 0.1, r * 0.6);
+  sweepGrad.addColorStop(0, 'rgba(255,255,255,0.6)');
+  sweepGrad.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+  sweepGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sweepGrad;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Sharp highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.2, -r * 0.35, r * 0.18, r * 0.1, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Environment reflection hint (subtle colored reflection)
+  ctx.fillStyle = `rgba(100,150,200,${0.05 + Math.sin(time) * 0.03})`;
+  ctx.beginPath();
+  ctx.ellipse(r * 0.2, r * 0.1, r * 0.5, r * 0.3, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── Rainbow Ball ────────────────────────────────────────────────
 function drawRainbowBall(r) {
   const time = performance.now() * 0.001;
 
-  // Animated rainbow gradient
-  const grad = ctx.createConicGradient(time, 0, 0);
+  // Grand outer glow
+  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 2);
+  const hue = (time * 60) % 360;
+  glow.addColorStop(0, `hsla(${hue}, 80%, 65%, 0.3)`);
+  glow.addColorStop(0.5, `hsla(${(hue + 120) % 360}, 80%, 65%, 0.1)`);
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Animated rainbow conic gradient
+  const grad = ctx.createConicGradient(time * 1.5, 0, 0);
   const colors = ['#E74C3C', '#E67E22', '#F1C40F', '#2ECC71', '#3498DB', '#6C3483', '#A569BD', '#E74C3C'];
   for (let i = 0; i < colors.length; i++) {
     grad.addColorStop(i / (colors.length - 1), colors[i]);
@@ -273,86 +477,114 @@ function drawRainbowBall(r) {
   ctx.closePath();
   ctx.fill();
 
-  // Shimmering overlay
-  ctx.fillStyle = `rgba(255,255,255,${0.15 + Math.sin(time * 3) * 0.1})`;
+  // Shimmering white overlay
+  const shimmer = 0.15 + Math.sin(time * 4) * 0.1 + Math.sin(time * 7) * 0.05;
+  ctx.fillStyle = `rgba(255,255,255,${shimmer})`;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
 
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  // Rotating star highlight
+  ctx.save();
+  ctx.rotate(time * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
   ctx.beginPath();
-  ctx.ellipse(-r * 0.25, -r * 0.3, r * 0.4, r * 0.25, -0.5, 0, Math.PI * 2);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const outerR = r * 0.5;
+    const innerR = r * 0.2;
+    ctx.lineTo(Math.cos(a) * outerR, Math.sin(a) * outerR);
+    const midA = a + Math.PI / 6;
+    ctx.lineTo(Math.cos(midA) * innerR, Math.sin(midA) * innerR);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Main highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.4, r * 0.25, -0.5, 0, Math.PI * 2);
   ctx.fill();
 
   // Stroke
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = `hsla(${hue}, 70%, 75%, 0.6)`;
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.stroke();
 }
 
-// ── Chrome ball (shiny metallic) ────────────────────────────────
-// (integrated into drawSolidBall via the silver gradient)
+// ── Preview Ball ────────────────────────────────────────────────
+function drawPreview(x, tierIndex, isDragging, isTouchDevice) {
+  const tier = BALL_TIERS[tierIndex];
+  const y = DROP_Y;
 
-// ── Merge Effects ───────────────────────────────────────────────
-function drawMergeEffects(effects) {
-  const now = performance.now();
+  // On touch: show bigger, more visible preview while dragging
+  const baseAlpha = isDragging ? 0.7 : 0.45;
+  const pulse = Math.sin(performance.now() * 0.005) * 0.1;
+  const scale = isDragging ? 1.05 : 1;
 
-  for (const effect of effects) {
-    const elapsed = now - effect.startTime;
-    const progress = elapsed / effect.duration;
-    if (progress >= 1) continue;
+  ctx.save();
+  ctx.globalAlpha = baseAlpha + pulse;
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
 
-    const tier = BALL_TIERS[effect.tierIndex];
-    const color = tier.color === 'rainbow' ? '#FFD700' : tier.color;
-    const r = tier.radius;
+  if (tier.color === 'rainbow') {
+    drawRainbowBall(tier.radius);
+  } else if (tier.name === 'chrome') {
+    drawChromeBall(tier.radius);
+  } else {
+    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+  }
 
+  ctx.restore();
+
+  // Touch: draw drag indicator ring
+  if (isDragging) {
     ctx.save();
-    ctx.translate(effect.x, effect.y);
-
-    // Expanding ring
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3 * (1 - progress);
-    ctx.globalAlpha = 1 - progress;
+    ctx.globalAlpha = 0.3 + pulse;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.arc(0, 0, r * (1 + progress * 2), 0, Math.PI * 2);
+    ctx.arc(x, y, tier.radius + 8, 0, Math.PI * 2);
     ctx.stroke();
-
-    // Particles
-    const particleCount = 8;
-    for (let i = 0; i < particleCount; i++) {
-      const angle = (i / particleCount) * Math.PI * 2;
-      const dist = r * progress * 2.5;
-      const px = Math.cos(angle) * dist;
-      const py = Math.sin(angle) * dist;
-      const size = 3 * (1 - progress);
-
-      ctx.fillStyle = color;
-      ctx.globalAlpha = (1 - progress) * 0.8;
-      ctx.beginPath();
-      ctx.arc(px, py, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
+    ctx.setLineDash([]);
     ctx.restore();
   }
 }
 
-// ── Preview Ball ────────────────────────────────────────────────
-function drawPreview(x, tierIndex) {
+// ── Next Ball Preview (small, in corner) ────────────────────────
+function drawNextBall(tierIndex) {
+  if (tierIndex === undefined) return;
+
   const tier = BALL_TIERS[tierIndex];
-  const y = DROP_Y;
+  const previewR = Math.min(tier.radius * 0.5, 16);
+  const px = GAME_WIDTH - 35;
+  const py = 55;
 
   ctx.save();
-  ctx.globalAlpha = 0.5 + Math.sin(performance.now() * 0.005) * 0.15;
-  ctx.translate(x, y);
+
+  // Label
+  ctx.font = '11px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.textAlign = 'center';
+  ctx.fillText('NEXT', px, py - previewR - 8);
+
+  // Mini ball
+  ctx.globalAlpha = 0.6;
+  ctx.translate(px, py);
+
+  const miniScale = previewR / tier.radius;
+  ctx.scale(miniScale, miniScale);
 
   if (tier.color === 'rainbow') {
     drawRainbowBall(tier.radius);
+  } else if (tier.name === 'chrome') {
+    drawChromeBall(tier.radius);
   } else {
-    drawSolidBall(tier.radius, tier.color, tier.stroke);
+    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
   }
 
   ctx.restore();
@@ -368,22 +600,83 @@ function drawScore(score, highScore, combo) {
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   ctx.fillText('SQUISHY GUYS', GAME_WIDTH / 2, 28);
 
-  // Score
-  ctx.font = 'bold 28px "Patrick Hand", cursive';
+  // Score with shadow
+  ctx.font = 'bold 30px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillText(score.toLocaleString(), GAME_WIDTH / 2 + 1, 61);
   ctx.fillStyle = '#FFFFFF';
   ctx.fillText(score.toLocaleString(), GAME_WIDTH / 2, 60);
 
   // High score
   ctx.font = '14px "Patrick Hand", cursive';
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
   ctx.fillText(`Best: ${highScore.toLocaleString()}`, GAME_WIDTH / 2, 80);
 
-  // Combo indicator
+  // Combo indicator with scale animation
   if (combo > 1) {
-    ctx.font = 'bold 20px "Patrick Hand", cursive';
+    const comboScale = 1 + Math.sin(performance.now() * 0.012) * 0.08;
+    ctx.save();
+    ctx.translate(GAME_WIDTH / 2, 106);
+    ctx.scale(comboScale, comboScale);
+    ctx.font = `bold ${18 + Math.min(combo, 5) * 2}px "Patrick Hand", cursive`;
+
+    // Glow
+    ctx.fillStyle = `rgba(241, 196, 15, ${0.3 + Math.sin(performance.now() * 0.015) * 0.2})`;
+    ctx.fillText(`${combo}x COMBO!`, 0, 0);
+
     ctx.fillStyle = '#F1C40F';
-    ctx.globalAlpha = 0.6 + Math.sin(performance.now() * 0.01) * 0.4;
-    ctx.fillText(`${combo}x COMBO!`, GAME_WIDTH / 2, 108);
+    ctx.globalAlpha = 0.7 + Math.sin(performance.now() * 0.01) * 0.3;
+    ctx.fillText(`${combo}x COMBO!`, 0, 0);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+// ── Mute Button ─────────────────────────────────────────────────
+export const MUTE_BTN = { x: 20, y: 45, size: 22 };
+
+function drawMuteButton(muted) {
+  const { x, y, size } = MUTE_BTN;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.globalAlpha = 0.4;
+
+  // Speaker icon
+  ctx.fillStyle = '#FFFFFF';
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+
+  // Speaker body
+  ctx.beginPath();
+  ctx.moveTo(-4, -3);
+  ctx.lineTo(-1, -3);
+  ctx.lineTo(4, -7);
+  ctx.lineTo(4, 7);
+  ctx.lineTo(-1, 3);
+  ctx.lineTo(-4, 3);
+  ctx.closePath();
+  ctx.fill();
+
+  if (muted) {
+    // X mark
+    ctx.strokeStyle = '#E74C3C';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(7, -4);
+    ctx.lineTo(13, 4);
+    ctx.moveTo(13, -4);
+    ctx.lineTo(7, 4);
+    ctx.stroke();
+  } else {
+    // Sound waves
+    ctx.beginPath();
+    ctx.arc(4, 0, 5, -0.6, 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(4, 0, 9, -0.5, 0.5);
+    ctx.stroke();
   }
 
   ctx.restore();
@@ -393,45 +686,71 @@ function drawScore(score, highScore, combo) {
 function drawGameOver(score, highScore, won) {
   ctx.save();
 
-  // Dim overlay
-  ctx.fillStyle = 'rgba(0,0,0,0.7)';
-  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  // Animated dim overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  ctx.fillRect(-20, -20, GAME_WIDTH + 40, GAME_HEIGHT + 40);
 
   ctx.textAlign = 'center';
+  const cx = GAME_WIDTH / 2;
+  const cy = GAME_HEIGHT / 2;
 
   if (won) {
-    // Rainbow win!
-    ctx.font = 'bold 36px "Patrick Hand", cursive';
+    // Rainbow win - cycling colors
     const time = performance.now() * 0.002;
-    ctx.fillStyle = `hsl(${(time * 60) % 360}, 80%, 65%)`;
-    ctx.fillText('RAINBOW!', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+    ctx.font = 'bold 42px "Patrick Hand", cursive';
+    ctx.fillStyle = `hsl(${(time * 60) % 360}, 85%, 65%)`;
+    ctx.fillText('RAINBOW!', cx, cy - 70);
 
-    ctx.font = '22px "Patrick Hand", cursive';
+    ctx.font = '24px "Patrick Hand", cursive';
     ctx.fillStyle = '#FFD700';
-    ctx.fillText('You did it!', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+    ctx.fillText('You did it!', cx, cy - 30);
+
+    // Sparkle emojis
+    ctx.font = '20px sans-serif';
+    const sparkleY = cy - 95;
+    ctx.fillText('*', cx - 80 + Math.sin(time * 3) * 5, sparkleY);
+    ctx.fillText('*', cx + 80 + Math.sin(time * 3 + 2) * 5, sparkleY);
   } else {
-    ctx.font = 'bold 36px "Patrick Hand", cursive';
+    ctx.font = 'bold 42px "Patrick Hand", cursive';
+    // Subtle pulse
+    const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.02;
+    ctx.save();
+    ctx.translate(cx, cy - 70);
+    ctx.scale(pulse, pulse);
     ctx.fillStyle = '#E74C3C';
-    ctx.fillText('GAME OVER', GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+    ctx.fillText('GAME OVER', 0, 0);
+    ctx.restore();
   }
 
-  ctx.font = '22px "Patrick Hand", cursive';
+  // Score
+  ctx.font = '24px "Patrick Hand", cursive';
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(`Score: ${score.toLocaleString()}`, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 10);
+  ctx.fillText(`Score: ${score.toLocaleString()}`, cx, cy + 10);
 
+  // New high score
   if (score >= highScore && score > 0) {
+    const bounce = Math.sin(performance.now() * 0.006) * 3;
+    ctx.font = 'bold 22px "Patrick Hand", cursive';
     ctx.fillStyle = '#F1C40F';
-    ctx.fillText('New High Score!', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 45);
+    ctx.fillText('New High Score!', cx, cy + 45 + bounce);
   }
 
+  // Restart prompt with pulse
+  const promptAlpha = 0.4 + Math.sin(performance.now() * 0.004) * 0.2;
   ctx.font = '18px "Patrick Hand", cursive';
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('Tap to play again', GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90);
+  ctx.fillStyle = `rgba(255,255,255,${promptAlpha})`;
+  ctx.fillText('Tap to play again', cx, cy + 95);
 
   ctx.restore();
 }
 
 // ── Color Utilities ─────────────────────────────────────────────
+function hexWithAlpha(hex, alpha) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return `rgba(200,200,200,${alpha})`;
+  return `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+}
+
 function lightenColor(hex, amount) {
   const rgb = hexToRgb(hex);
   if (!rgb) return hex;
@@ -451,4 +770,10 @@ function hexToRgb(hex) {
     g: parseInt(result[2], 16),
     b: parseInt(result[3], 16),
   } : null;
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }

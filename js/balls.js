@@ -141,13 +141,13 @@ function performMerge(bodies, tierIndex) {
   // Unlock tier
   unlockedTiers.add(nextTier);
 
-  // Add merge effect
+  // Add merge effect (kept for backwards compat, main effects via particles.js)
   mergeEffects.push({
     x: mx,
     y: my,
     tierIndex: nextTier,
     startTime: performance.now(),
-    duration: 400,
+    duration: 600,
   });
 
   return nextTierData.points;

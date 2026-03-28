@@ -11,6 +11,7 @@ const { Engine, World, Bodies, Body, Events, Composite } = Matter;
 
 let engine;
 let collisionCallback = null;
+let wallCollisionCallback = null;
 
 export function init() {
   engine = Engine.create({
@@ -114,10 +115,26 @@ export function removeBody(body) {
 // ── Collision Handling ──────────────────────────────────────────
 function registerCollisionHandler() {
   Events.on(engine, 'collisionStart', (event) => {
-    if (!collisionCallback) return;
     for (const pair of event.pairs) {
-      if (pair.bodyA.label === 'ball' && pair.bodyB.label === 'ball') {
-        collisionCallback(pair.bodyA, pair.bodyB);
+      const { bodyA, bodyB } = pair;
+
+      // Ball-ball collision
+      if (bodyA.label === 'ball' && bodyB.label === 'ball') {
+        if (collisionCallback) collisionCallback(bodyA, bodyB);
+      }
+
+      // Ball-wall collision (for bounce sounds)
+      if (wallCollisionCallback) {
+        let ball = null;
+        if (bodyA.label === 'ball' && (bodyB.label === 'cup-wall' || bodyB.label === 'boundary')) {
+          ball = bodyA;
+        } else if (bodyB.label === 'ball' && (bodyA.label === 'cup-wall' || bodyA.label === 'boundary')) {
+          ball = bodyB;
+        }
+        if (ball) {
+          const speed = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
+          wallCollisionCallback(ball, speed);
+        }
       }
     }
   });
@@ -125,6 +142,10 @@ function registerCollisionHandler() {
 
 export function onCollision(callback) {
   collisionCallback = callback;
+}
+
+export function onWallCollision(callback) {
+  wallCollisionCallback = callback;
 }
 
 // ── Step ────────────────────────────────────────────────────────
