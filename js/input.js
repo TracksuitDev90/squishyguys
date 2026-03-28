@@ -1,75 +1,166 @@
 // ── Unified Input (Mouse + Touch) ───────────────────────────────
-import { CUP_LEFT_X, CUP_RIGHT_X, BALL_TIERS } from './config.js';
+// Desktop: move mouse to aim, click to drop
+// Mobile: touch & drag to aim, release to drop (more natural on touch)
+import { CUP_LEFT_X, CUP_RIGHT_X, GAME_WIDTH } from './config.js';
 
-let canvas, scaleX, scaleY, offsetX, offsetY;
+let canvas;
+let logicalW, logicalH;
+let isTouchDevice = false;
 
 export const state = {
   pointerX: (CUP_LEFT_X + CUP_RIGHT_X) / 2,
   pointerActive: false,
   dropRequested: false,
+  isDragging: false,       // touch: finger is currently down
+  dragStartX: 0,           // where touch started
+  pointerDown: false,      // raw pointer-down state
 };
 
 export function init(canvasEl, logicalWidth, logicalHeight) {
   canvas = canvasEl;
-  updateScale(logicalWidth, logicalHeight);
+  logicalW = logicalWidth;
+  logicalH = logicalHeight;
 
-  // Mouse events
-  canvas.addEventListener('mousemove', onPointerMove);
-  canvas.addEventListener('mousedown', onPointerDown);
+  // Detect touch support
+  isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  // ── Mouse events ──────────────────────────────────────────────
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('mouseenter', () => { state.pointerActive = true; });
-  canvas.addEventListener('mouseleave', () => { state.pointerActive = false; });
+  canvas.addEventListener('mouseleave', () => {
+    state.pointerActive = false;
+    state.pointerDown = false;
+  });
 
-  // Touch events
+  // ── Touch events ──────────────────────────────────────────────
   canvas.addEventListener('touchstart', onTouchStart, { passive: false });
   canvas.addEventListener('touchmove', onTouchMove, { passive: false });
   canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+  canvas.addEventListener('touchcancel', onTouchCancel, { passive: false });
 
-  // Prevent context menu on long press
+  // Prevent all default touch behaviors
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // Prevent double-tap zoom on iOS
+  let lastTap = 0;
+  canvas.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTap < 300) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
 }
 
-export function updateScale(logicalWidth, logicalHeight) {
+function toLogicalX(clientX) {
   const rect = canvas.getBoundingClientRect();
-  scaleX = logicalWidth / rect.width;
-  scaleY = logicalHeight / rect.height;
-  offsetX = rect.left;
-  offsetY = rect.top;
-}
-
-function toLogical(clientX) {
-  const rect = canvas.getBoundingClientRect();
-  const x = (clientX - rect.left) * (scaleX || 1);
-  // Clamp to cup interior with a small margin for the current ball radius
-  const margin = 16;
+  const scaleX = logicalW / rect.width;
+  const x = (clientX - rect.left) * scaleX;
+  const margin = 18;
   return Math.max(CUP_LEFT_X + margin, Math.min(CUP_RIGHT_X - margin, x));
 }
 
-function onPointerMove(e) {
-  state.pointerX = toLogical(e.clientX);
+// ── Mouse Handlers ──────────────────────────────────────────────
+function onMouseMove(e) {
+  state.pointerX = toLogicalX(e.clientX);
   state.pointerActive = true;
 }
 
-function onPointerDown(e) {
-  state.pointerX = toLogical(e.clientX);
+function onMouseDown(e) {
+  state.pointerX = toLogicalX(e.clientX);
+  state.pointerDown = true;
+  state.pointerActive = true;
+  // Desktop: click = immediate drop
   state.dropRequested = true;
-  state.pointerActive = true;
 }
 
+function onMouseUp(e) {
+  state.pointerDown = false;
+}
+
+// ── Touch Handlers ──────────────────────────────────────────────
 function onTouchStart(e) {
   e.preventDefault();
   const touch = e.touches[0];
-  state.pointerX = toLogical(touch.clientX);
+  const x = toLogicalX(touch.clientX);
+
+  state.pointerX = x;
   state.pointerActive = true;
-  state.dropRequested = true;
+  state.isDragging = true;
+  state.dragStartX = x;
+  state.pointerDown = true;
+
+  // Haptic feedback on touch start
+  triggerHaptic('light');
 }
 
 function onTouchMove(e) {
   e.preventDefault();
+  if (!e.touches.length) return;
+
   const touch = e.touches[0];
-  state.pointerX = toLogical(touch.clientX);
+  state.pointerX = toLogicalX(touch.clientX);
+  state.isDragging = true;
 }
 
 function onTouchEnd(e) {
   e.preventDefault();
-  // Keep pointerActive true on touch so the preview stays visible
+
+  if (state.isDragging) {
+    // Drop on release
+    state.dropRequested = true;
+    triggerHaptic('medium');
+  }
+
+  state.isDragging = false;
+  state.pointerDown = false;
+  // Keep pointerActive true so the preview doesn't vanish immediately
+  // It will fade in the renderer
+}
+
+function onTouchCancel(e) {
+  e.preventDefault();
+  state.isDragging = false;
+  state.pointerDown = false;
+}
+
+// ── Haptic Feedback ─────────────────────────────────────────────
+function triggerHaptic(style) {
+  if (!navigator.vibrate) return;
+  switch (style) {
+    case 'light':
+      navigator.vibrate(10);
+      break;
+    case 'medium':
+      navigator.vibrate(20);
+      break;
+    case 'heavy':
+      navigator.vibrate([30, 20, 30]);
+      break;
+    case 'success':
+      navigator.vibrate([20, 40, 20, 40, 40]);
+      break;
+  }
+}
+
+export function hapticMerge(tierIndex) {
+  if (tierIndex >= 7) {
+    triggerHaptic('heavy');
+  } else if (tierIndex >= 4) {
+    triggerHaptic('medium');
+  } else {
+    triggerHaptic('light');
+  }
+}
+
+export function hapticGameOver() {
+  triggerHaptic('heavy');
+}
+
+export function hapticWin() {
+  triggerHaptic('success');
+}
+
+export function getIsTouchDevice() {
+  return isTouchDevice;
 }
