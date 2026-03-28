@@ -5,7 +5,7 @@ export const STORE_ITEMS = [
   {
     id: 'colorBomb',
     name: 'COLOR BOMB',
-    desc: 'Merges all balls of one color',
+    desc: 'Drop a bomb that merges like colors',
     basePrice: 150,
     icon: '\u25C9', // ◉
   },
@@ -22,7 +22,7 @@ export const STORE_ITEMS = [
 let purchaseCounts = { colorBomb: 0, cupExtend: 0 };
 
 // Active state
-let colorBombActive = false;
+let bombQueued = false; // next drop will be a bomb ball
 let cupExtensions = 0;
 const CUP_EXTEND_PX = 35; // how much each extension adds
 
@@ -30,8 +30,8 @@ export function getPrice(itemId) {
   const item = STORE_ITEMS.find(i => i.id === itemId);
   if (!item) return Infinity;
   const count = purchaseCounts[itemId] || 0;
-  // Price scales: base, base*1.8, base*3, base*4.5 ...
-  return Math.round(item.basePrice * (1 + count * 0.8));
+  // Price doubles per purchase: base, 2x, 3x, 4x ...
+  return Math.round(item.basePrice * (1 + count));
 }
 
 export function canAfford(itemId, currentScore) {
@@ -45,7 +45,7 @@ export function purchase(itemId, currentScore) {
   purchaseCounts[itemId] = (purchaseCounts[itemId] || 0) + 1;
 
   if (itemId === 'colorBomb') {
-    colorBombActive = true;
+    bombQueued = true;
   } else if (itemId === 'cupExtend') {
     cupExtensions++;
   }
@@ -53,12 +53,12 @@ export function purchase(itemId, currentScore) {
   return { success: true, cost: price };
 }
 
-export function isColorBombActive() {
-  return colorBombActive;
+export function isBombQueued() {
+  return bombQueued;
 }
 
-export function consumeColorBomb() {
-  colorBombActive = false;
+export function consumeBombQueue() {
+  bombQueued = false;
 }
 
 export function getCupExtensions() {
@@ -71,6 +71,6 @@ export function getCupExtendPx() {
 
 export function reset() {
   purchaseCounts = { colorBomb: 0, cupExtend: 0 };
-  colorBombActive = false;
+  bombQueued = false;
   cupExtensions = 0;
 }

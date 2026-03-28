@@ -179,6 +179,24 @@ export function createBallBody(x, y, tierIndex) {
   return body;
 }
 
+export function createBombBody(x, y) {
+  const body = Bodies.circle(x, y, 16, {
+    restitution: 0.2,
+    friction: 0.03,
+    density: BALL_DENSITY,
+    label: 'ball', // still a 'ball' for collision detection
+  });
+
+  body.isBomb = true;
+  body.tierIndex = -1;
+  body.isMerging = false;
+  body.createdAt = performance.now();
+  body.aboveDangerSince = null;
+
+  Composite.add(engine.world, body);
+  return body;
+}
+
 export function removeBody(body) {
   Composite.remove(engine.world, body);
 }

@@ -1,6 +1,6 @@
 // ── Ball Management & Merging ───────────────────────────────────
 import {
-  BALL_TIERS, DROP_WEIGHTS, MAX_INITIAL_DROP_TIER,
+  BALL_TIERS, DROP_WEIGHTS, MAX_DROP_TIER,
   DANGER_LINE_Y, DANGER_DURATION_MS, DROP_Y,
 } from './config.js';
 import * as Physics from './physics.js';
@@ -11,17 +11,21 @@ const activeBalls = new Map();
 // Merge effects for renderer
 export const mergeEffects = [];
 
-// Tiers the player has unlocked (created via merge). Starts with tiers 0-4.
-const unlockedTiers = new Set([0, 1, 2, 3, 4]);
-
-// Track chrome counts for triple-merge
-const pendingMerges = new Map(); // tierIndex → [body, body, ...]
+// Tiers the player has unlocked (created via merge). Starts with 0-3.
+const unlockedTiers = new Set([0, 1, 2, 3]);
 
 // ── Public API ──────────────────────────────────────────────────
 
 export function spawnBall(x, tierIndex) {
   const body = Physics.createBallBody(x, DROP_Y, tierIndex);
   activeBalls.set(body.id, { body, tierIndex });
+  return body;
+}
+
+export function spawnBombBall(x) {
+  // Bomb ball: small (radius ~16), special label
+  const body = Physics.createBombBody(x, DROP_Y);
+  activeBalls.set(body.id, { body, tierIndex: -1, isBomb: true });
   return body;
 }
 
@@ -40,7 +44,7 @@ export function reset() {
   activeBalls.clear();
   mergeEffects.length = 0;
   unlockedTiers.clear();
-  [0, 1, 2, 3, 4].forEach(t => unlockedTiers.add(t));
+  [0, 1, 2, 3].forEach(t => unlockedTiers.add(t));
 }
 
 // ── Drop Tier Selection ─────────────────────────────────────────
@@ -49,7 +53,7 @@ export function getNextDropTier() {
   let totalWeight = 0;
   const pool = [];
 
-  for (let i = 0; i <= MAX_INITIAL_DROP_TIER; i++) {
+  for (let i = 0; i <= MAX_DROP_TIER; i++) {
     if (unlockedTiers.has(i) && DROP_WEIGHTS[i] > 0) {
       pool.push({ tier: i, weight: DROP_WEIGHTS[i] });
       totalWeight += DROP_WEIGHTS[i];
@@ -72,43 +76,83 @@ export function handleCollision(bodyA, bodyB) {
   const ballB = activeBalls.get(bodyB.id);
 
   if (!ballA || !ballB) return 0;
+
+  // Check for bomb collision
+  if (ballA.isBomb || ballB.isBomb) {
+    const bomb = ballA.isBomb ? ballA : ballB;
+    const target = ballA.isBomb ? ballB : ballA;
+    return triggerBombEffect(bomb, target);
+  }
+
   if (ballA.tierIndex !== ballB.tierIndex) return 0;
   if (bodyA.isMerging || bodyB.isMerging) return 0;
 
   const tierIndex = ballA.tierIndex;
-  const tier = BALL_TIERS[tierIndex];
 
   // Rainbow can't merge further
   if (tierIndex >= BALL_TIERS.length - 1) return 0;
 
-  const mergeCount = tier.mergeCount;
-
-  if (mergeCount <= 2) {
-    // Standard 2-ball merge
-    return performMerge([bodyA, bodyB], tierIndex);
-  } else {
-    // Need 3 (chrome → rainbow): queue them up
-    return handleMultiMerge(bodyA, bodyB, tierIndex, mergeCount);
-  }
-}
-
-function handleMultiMerge(bodyA, bodyB, tierIndex, needed) {
-  // For chrome (mergeCount=3), we do 2→1 merge that produces another chrome,
-  // then when 2 chromes collide again, they try to merge.
-  // Simpler approach: just use 2-merge like everything else but the
-  // config says 3, so let's require the user to combine 3.
-  //
-  // Actually, let's simplify: chrome merges 2→1 to produce a "super chrome"
-  // (still looks chrome but marked), and super chrome + chrome = rainbow.
-  // OR: keep it simple — 2 chromes = rainbow, but require more chromes
-  // total (since each chrome takes 2 violets, that's already hard).
-  //
-  // For now: treat chrome like everything else (2→1 merge to rainbow).
-  // The "3 chromes" requirement means the user needs to merge 3 pairs,
-  // so effectively they need 6 violets (very hard). The mergeCount
-  // in config can be used for scoring multiplier instead.
   return performMerge([bodyA, bodyB], tierIndex);
 }
+
+// ── Bomb Effect ─────────────────────────────────────────────────
+// When a bomb hits a ball, suck in and merge ALL balls of that color.
+function triggerBombEffect(bombEntry, targetEntry) {
+  const targetTier = targetEntry.tierIndex;
+
+  // Can't bomb rainbows
+  if (targetTier >= BALL_TIERS.length - 1) return 0;
+
+  // Remove the bomb ball
+  activeBalls.delete(bombEntry.body.id);
+  Physics.removeBody(bombEntry.body);
+
+  // Gather all balls of the target tier
+  const targets = [];
+  for (const [id, entry] of activeBalls) {
+    if (entry.tierIndex === targetTier && !entry.body.isMerging) {
+      targets.push({ id, body: entry.body });
+    }
+  }
+
+  if (targets.length < 2) return 0;
+
+  // Calculate center point for visual effect
+  const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
+  const midY = targets.reduce((s, t) => s + t.body.position.y, 0) / targets.length;
+
+  // Merge in pairs
+  const pairs = Math.floor(targets.length / 2);
+  let totalPoints = 0;
+
+  for (let i = 0; i < pairs; i++) {
+    const a = targets[i * 2];
+    const b = targets[i * 2 + 1];
+
+    const ballA = activeBalls.get(a.id);
+    const ballB = activeBalls.get(b.id);
+    if (!ballA || !ballB) continue;
+
+    totalPoints += performMerge([a.body, b.body], targetTier);
+  }
+  // Odd ball remains untouched
+
+  // Add a big merge effect at the center
+  if (totalPoints > 0) {
+    mergeEffects.push({
+      x: midX,
+      y: midY,
+      tierIndex: targetTier + 1,
+      startTime: performance.now(),
+      duration: 800,
+    });
+  }
+
+  return totalPoints;
+}
+
+// Expose for external use (returns the tier hit, for particles)
+export let lastBombTier = -1;
 
 function performMerge(bodies, tierIndex) {
   const nextTier = tierIndex + 1;
@@ -141,7 +185,7 @@ function performMerge(bodies, tierIndex) {
   // Unlock tier
   unlockedTiers.add(nextTier);
 
-  // Add merge effect (kept for backwards compat, main effects via particles.js)
+  // Add merge effect
   mergeEffects.push({
     x: mx,
     y: my,
@@ -158,13 +202,16 @@ function performMerge(bodies, tierIndex) {
 export function checkGameOver(dangerY) {
   const effectiveDangerY = dangerY != null ? dangerY : DANGER_LINE_Y;
   const now = performance.now();
-  for (const { body } of activeBalls.values()) {
+  for (const [, entry] of activeBalls) {
+    const { body } = entry;
     if (body.isMerging) continue;
+    if (entry.isBomb) continue; // bomb balls don't cause game over
 
     // Ignore recently spawned balls (give them time to fall)
     if (now - body.createdAt < 1500) continue;
 
-    if (body.position.y - BALL_TIERS[body.tierIndex].radius < effectiveDangerY) {
+    const tierRadius = entry.tierIndex >= 0 ? BALL_TIERS[entry.tierIndex].radius : 16;
+    if (body.position.y - tierRadius < effectiveDangerY) {
       if (!body.aboveDangerSince) {
         body.aboveDangerSince = now;
       } else if (now - body.aboveDangerSince > DANGER_DURATION_MS) {
@@ -175,19 +222,6 @@ export function checkGameOver(dangerY) {
     }
   }
   return false;
-}
-
-// ── Color Bomb Merge (force merge two specific balls) ───────────
-export function forceColorBombMerge(idA, idB) {
-  const ballA = activeBalls.get(idA);
-  const ballB = activeBalls.get(idB);
-  if (!ballA || !ballB) return 0;
-  if (ballA.tierIndex !== ballB.tierIndex) return 0;
-
-  const tierIndex = ballA.tierIndex;
-  if (tierIndex >= BALL_TIERS.length - 1) return 0;
-
-  return performMerge([ballA.body, ballB.body], tierIndex);
 }
 
 // ── Rainbow Check ───────────────────────────────────────────────

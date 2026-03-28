@@ -7,10 +7,10 @@ import {
 } from './config.js';
 import * as Particles from './particles.js';
 
-// Store button layout
+// Store button layout — positioned in the header area, well above the cup
 const STORE_BUTTONS = [
-  { id: 'colorBomb', x: 58, y: 145, w: 130, h: 30 },
-  { id: 'cupExtend', x: 212, y: 145, w: 130, h: 30 },
+  { id: 'colorBomb', x: 58, y: 96, w: 130, h: 28 },
+  { id: 'cupExtend', x: 212, y: 96, w: 130, h: 28 },
 ];
 
 let canvas, ctx;
@@ -72,7 +72,7 @@ export function render(state) {
   Particles.draw(ctx);
 
   if (state.gameState === 'playing') {
-    drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice);
+    drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued);
     drawDropLine(state.previewX);
   }
 
@@ -247,8 +247,12 @@ function drawBalls(ballMap, gameState) {
   // Sort by y position so lower balls draw on top (depth feel)
   const sorted = [...ballMap.values()].sort((a, b) => a.body.position.y - b.body.position.y);
 
-  for (const { body, tierIndex } of sorted) {
-    drawBall(body, tierIndex, gameState);
+  for (const entry of sorted) {
+    if (entry.isBomb) {
+      drawBombBall(entry.body);
+    } else {
+      drawBall(entry.body, entry.tierIndex, gameState);
+    }
   }
 }
 
@@ -331,6 +335,86 @@ function drawBall(body, tierIndex, gameState) {
   }
 
   ctx.restore();
+}
+
+// ── Bomb Ball ───────────────────────────────────────────────────
+function drawBombBall(body) {
+  const { x, y } = body.position;
+  const r = 16;
+  const sq = getSquishState(body);
+
+  if (sq.spawnProgress < 1) {
+    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
+    const t = easeOutBack(sq.spawnProgress);
+    sq.scaleX = t;
+    sq.scaleY = t;
+  } else {
+    sq.scaleX += (1 - sq.scaleX) * 0.15;
+    sq.scaleY += (1 - sq.scaleY) * 0.15;
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(body.angle);
+  ctx.scale(sq.scaleX, sq.scaleY);
+
+  drawBombVisual(r);
+
+  ctx.restore();
+}
+
+function drawBombVisual(r) {
+  const time = performance.now() * 0.003;
+
+  // Pulsing outer glow
+  const pulseR = r * (1.8 + Math.sin(time * 2) * 0.3);
+  const glow = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, pulseR);
+  glow.addColorStop(0, 'rgba(255, 60, 60, 0.4)');
+  glow.addColorStop(0.5, 'rgba(200, 40, 200, 0.15)');
+  glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Dark core
+  const coreGrad = ctx.createRadialGradient(-r * 0.2, -r * 0.25, r * 0.05, 0, 0, r);
+  coreGrad.addColorStop(0, '#555');
+  coreGrad.addColorStop(0.3, '#333');
+  coreGrad.addColorStop(0.7, '#1a1a1a');
+  coreGrad.addColorStop(1, '#000');
+  ctx.fillStyle = coreGrad;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Red/magenta ring
+  const ringAlpha = 0.6 + Math.sin(time * 3) * 0.2;
+  ctx.strokeStyle = `rgba(255, 50, 100, ${ringAlpha})`;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Inner crosshair / target symbol
+  ctx.strokeStyle = `rgba(255, 80, 80, ${0.5 + Math.sin(time * 4) * 0.2})`;
+  ctx.lineWidth = 1.5;
+  const cr = r * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(-cr, 0); ctx.lineTo(cr, 0);
+  ctx.moveTo(0, -cr); ctx.lineTo(0, cr);
+  ctx.stroke();
+
+  // Tiny inner ring
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Highlight dot
+  ctx.fillStyle = 'rgba(255, 150, 150, 0.5)';
+  ctx.beginPath();
+  ctx.arc(-r * 0.25, -r * 0.3, r * 0.12, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // Clean up squish states for removed balls
@@ -577,8 +661,7 @@ function drawRainbowBall(r) {
 }
 
 // ── Preview Ball ────────────────────────────────────────────────
-function drawPreview(x, tierIndex, isDragging, isTouchDevice) {
-  const tier = BALL_TIERS[tierIndex];
+function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued) {
   const y = DROP_Y;
 
   // On touch: show bigger, more visible preview while dragging
@@ -591,17 +674,23 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice) {
   ctx.translate(x, y);
   ctx.scale(scale, scale);
 
-  if (tier.color === 'rainbow') {
-    drawRainbowBall(tier.radius);
-  } else if (tier.name === 'chrome') {
-    drawChromeBall(tier.radius);
+  if (bombQueued) {
+    drawBombVisual(16);
   } else {
-    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+    const tier = BALL_TIERS[tierIndex];
+    if (tier.color === 'rainbow') {
+      drawRainbowBall(tier.radius);
+    } else if (tier.name === 'chrome') {
+      drawChromeBall(tier.radius);
+    } else {
+      drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+    }
   }
 
   ctx.restore();
 
   // Touch: draw drag indicator ring
+  const previewR = bombQueued ? 16 : BALL_TIERS[tierIndex].radius;
   if (isDragging) {
     ctx.save();
     ctx.globalAlpha = 0.3 + pulse;
@@ -609,7 +698,7 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice) {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
-    ctx.arc(x, y, tier.radius + 8, 0, Math.PI * 2);
+    ctx.arc(x, y, previewR + 8, 0, Math.PI * 2);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
