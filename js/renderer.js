@@ -76,7 +76,6 @@ export function render(state) {
     if (!state.hasActiveGhost) {
       drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
       drawDropLine(state.previewX);
-      drawNextBall(state.nextTier);
     }
   }
 
