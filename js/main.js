@@ -132,6 +132,7 @@ function checkUIHit(x, y) {
   const dist = Math.sqrt((x - btn.x) ** 2 + (y - btn.y) ** 2);
   if (dist < btn.size) {
     Audio.toggleMute();
+    Input.state.uiConsumed = true;
     return true;
   }
 
@@ -150,6 +151,7 @@ function checkUIHit(x, y) {
       // colorBomb just queues the bomb for next drop (handled in drop logic)
 
       Audio.playMerge(5, 1); // satisfying purchase sound
+      Input.state.uiConsumed = true;
       return true;
     }
   }

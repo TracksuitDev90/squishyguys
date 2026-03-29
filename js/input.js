@@ -14,6 +14,7 @@ export const state = {
   isDragging: false,       // touch: finger is currently down
   dragStartX: 0,           // where touch started
   pointerDown: false,      // raw pointer-down state
+  uiConsumed: false,       // set true when a UI element consumes the input
 };
 
 export function init(canvasEl, logicalWidth, logicalHeight) {
@@ -70,8 +71,14 @@ function onMouseDown(e) {
   state.pointerX = toLogicalX(e.clientX);
   state.pointerDown = true;
   state.pointerActive = true;
-  // Desktop: click = immediate drop
-  state.dropRequested = true;
+  // Desktop: click = immediate drop (unless UI consumed the event)
+  // dropRequested is set after a microtask so UI handlers can cancel it
+  state.uiConsumed = false;
+  Promise.resolve().then(() => {
+    if (!state.uiConsumed) {
+      state.dropRequested = true;
+    }
+  });
 }
 
 function onMouseUp(e) {
@@ -89,6 +96,7 @@ function onTouchStart(e) {
   state.isDragging = true;
   state.dragStartX = x;
   state.pointerDown = true;
+  state.uiConsumed = false;
 
   // Haptic feedback on touch start
   triggerHaptic('light');
@@ -106,14 +114,15 @@ function onTouchMove(e) {
 function onTouchEnd(e) {
   e.preventDefault();
 
-  if (state.isDragging) {
-    // Drop on release
+  if (state.isDragging && !state.uiConsumed) {
+    // Drop on release (unless a UI element consumed this touch)
     state.dropRequested = true;
     triggerHaptic('medium');
   }
 
   state.isDragging = false;
   state.pointerDown = false;
+  state.uiConsumed = false;
   // Keep pointerActive true so the preview doesn't vanish immediately
   // It will fade in the renderer
 }

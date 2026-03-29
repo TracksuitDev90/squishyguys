@@ -9,9 +9,9 @@ import * as Particles from './particles.js';
 
 // Store button layout — positioned in the header area, well above the cup
 const STORE_BUTTONS = [
-  { id: 'colorBomb', x: 30, y: 96, w: 105, h: 28 },
-  { id: 'cupExtend', x: 148, y: 96, w: 105, h: 28 },
-  { id: 'ghostBall', x: 265, y: 96, w: 105, h: 28 },
+  { id: 'colorBomb', x: 30, y: 130, w: 105, h: 28 },
+  { id: 'cupExtend', x: 148, y: 130, w: 105, h: 28 },
+  { id: 'ghostBall', x: 265, y: 130, w: 105, h: 28 },
 ];
 
 let canvas, ctx;
@@ -76,6 +76,7 @@ export function render(state) {
     if (!state.hasActiveGhost) {
       drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
       drawDropLine(state.previewX);
+      drawNextBall(state.nextTier);
     }
   }
 
