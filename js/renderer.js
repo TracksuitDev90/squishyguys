@@ -9,8 +9,9 @@ import * as Particles from './particles.js';
 
 // Store button layout — positioned in the header area, well above the cup
 const STORE_BUTTONS = [
-  { id: 'colorBomb', x: 58, y: 96, w: 130, h: 28 },
-  { id: 'cupExtend', x: 212, y: 96, w: 130, h: 28 },
+  { id: 'colorBomb', x: 30, y: 96, w: 105, h: 28 },
+  { id: 'cupExtend', x: 148, y: 96, w: 105, h: 28 },
+  { id: 'ghostBall', x: 265, y: 96, w: 105, h: 28 },
 ];
 
 let canvas, ctx;
@@ -72,8 +73,10 @@ export function render(state) {
   Particles.draw(ctx);
 
   if (state.gameState === 'playing') {
-    drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued);
-    drawDropLine(state.previewX);
+    if (!state.hasActiveGhost) {
+      drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
+      drawDropLine(state.previewX);
+    }
   }
 
   drawScore(state.score, state.highScore, state.combo);
@@ -250,6 +253,8 @@ function drawBalls(ballMap, gameState) {
   for (const entry of sorted) {
     if (entry.isBomb) {
       drawBombBall(entry.body);
+    } else if (entry.isGhost) {
+      drawGhostBall(entry.body, entry.tierIndex);
     } else {
       drawBall(entry.body, entry.tierIndex, gameState);
     }
@@ -415,6 +420,82 @@ function drawBombVisual(r) {
   ctx.beginPath();
   ctx.arc(-r * 0.25, -r * 0.3, r * 0.12, 0, Math.PI * 2);
   ctx.fill();
+}
+
+// ── Ghost Ball ─────────────────────────────────────────────────
+function drawGhostBall(body, tierIndex) {
+  const tier = BALL_TIERS[tierIndex];
+  const { x, y } = body.position;
+  const r = tier.radius;
+  const sq = getSquishState(body);
+
+  if (sq.spawnProgress < 1) {
+    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
+    const t = easeOutBack(sq.spawnProgress);
+    sq.scaleX = t;
+    sq.scaleY = t;
+  } else {
+    sq.scaleX += (1 - sq.scaleX) * 0.15;
+    sq.scaleY += (1 - sq.scaleY) * 0.15;
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(body.angle);
+  ctx.scale(sq.scaleX, sq.scaleY);
+
+  const time = performance.now() * 0.003;
+  const ghostAlpha = 0.3 + Math.sin(time * 2) * 0.08;
+  ctx.globalAlpha = ghostAlpha;
+
+  // Ethereal outer glow
+  const glow = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.6);
+  glow.addColorStop(0, hexWithAlpha(tier.color, 0.25));
+  glow.addColorStop(0.5, hexWithAlpha(tier.color, 0.08));
+  glow.addColorStop(1, 'rgba(200,220,255,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Main body gradient (lighter, washed out)
+  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
+  grad.addColorStop(0, lightenColor(tier.color, 80));
+  grad.addColorStop(0.3, lightenColor(tier.color, 50));
+  grad.addColorStop(0.6, lightenColor(tier.color, 20));
+  grad.addColorStop(1, tier.color);
+  ctx.fillStyle = grad;
+
+  // Wobbly ghost outline (more wobbly than normal)
+  ctx.beginPath();
+  const points = 32;
+  const wobbleAmt = 0.04;
+  for (let i = 0; i <= points; i++) {
+    const a = (i / points) * Math.PI * 2;
+    const w = 1 + Math.sin(a * 3 + time * 2) * wobbleAmt
+                + Math.sin(a * 5 + time * 3) * wobbleAmt * 0.7;
+    const px = Math.cos(a) * r * w;
+    const py = Math.sin(a) * r * w;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Dashed ghostly stroke
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = hexWithAlpha(tier.stroke, 0.6);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.35, r * 0.18, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
 }
 
 // Clean up squish states for removed balls
@@ -661,7 +742,7 @@ function drawRainbowBall(r) {
 }
 
 // ── Preview Ball ────────────────────────────────────────────────
-function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued) {
+function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQueued) {
   const y = DROP_Y;
 
   // On touch: show bigger, more visible preview while dragging
@@ -676,6 +757,18 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued) {
 
   if (bombQueued) {
     drawBombVisual(16);
+  } else if (ghostQueued) {
+    // Ghostly preview — same ball but more transparent with dashed outline
+    const tier = BALL_TIERS[tierIndex];
+    ctx.globalAlpha = 0.25 + Math.sin(performance.now() * 0.006) * 0.1;
+    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(200,220,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, tier.radius + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   } else {
     const tier = BALL_TIERS[tierIndex];
     if (tier.color === 'rainbow') {
@@ -931,20 +1024,22 @@ function drawStoreButtons(prices, affordable) {
     ctx.stroke();
 
     // Label
-    const label = btn.id === 'colorBomb' ? '\u25C9 BOMB' : '\u2B06 CUP+';
+    const label = btn.id === 'colorBomb' ? '\u25C9 BOMB'
+                : btn.id === 'cupExtend' ? '\u2B06 CUP+'
+                : '\u25C7 GHOST';
     const textAlpha = canBuy ? 0.85 : 0.35;
-    ctx.font = 'bold 12px "Patrick Hand", cursive';
+    ctx.font = 'bold 11px "Patrick Hand", cursive';
     ctx.fillStyle = `rgba(255, 255, 255, ${textAlpha})`;
     ctx.textAlign = 'left';
-    ctx.fillText(label, btn.x + 8, btn.y + 20);
+    ctx.fillText(label, btn.x + 6, btn.y + 20);
 
     // Price
     ctx.textAlign = 'right';
-    ctx.font = '12px "Patrick Hand", cursive';
+    ctx.font = '11px "Patrick Hand", cursive';
     ctx.fillStyle = canBuy
       ? `rgba(46, 204, 113, ${textAlpha})`
       : `rgba(255, 255, 255, ${textAlpha * 0.7})`;
-    ctx.fillText(`${price}pts`, btn.x + btn.w - 8, btn.y + 20);
+    ctx.fillText(`${price}`, btn.x + btn.w - 6, btn.y + 20);
 
     ctx.restore();
   }

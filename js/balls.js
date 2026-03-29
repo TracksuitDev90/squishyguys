@@ -29,6 +29,36 @@ export function spawnBombBall(x) {
   return body;
 }
 
+// ── Ghost Ball ─────────────────────────────────────────────────
+let activeGhostBall = null;
+
+export function spawnGhostBall(x, tierIndex) {
+  const body = Physics.createGhostBody(x, DROP_Y, tierIndex);
+  const entry = { body, tierIndex, isGhost: true };
+  activeBalls.set(body.id, entry);
+  activeGhostBall = { id: body.id, body, tierIndex };
+  return body;
+}
+
+export function getActiveGhost() {
+  if (activeGhostBall && activeBalls.has(activeGhostBall.id)) {
+    const entry = activeBalls.get(activeGhostBall.id);
+    if (entry.isGhost) return activeGhostBall;
+  }
+  activeGhostBall = null;
+  return null;
+}
+
+export function activateGhost() {
+  if (!activeGhostBall) return;
+  const entry = activeBalls.get(activeGhostBall.id);
+  if (entry && entry.isGhost) {
+    Physics.activateGhostBody(entry.body);
+    entry.isGhost = false;
+  }
+  activeGhostBall = null;
+}
+
 export function getAll() {
   return activeBalls;
 }
@@ -43,6 +73,7 @@ export function reset() {
   }
   activeBalls.clear();
   mergeEffects.length = 0;
+  activeGhostBall = null;
   unlockedTiers.clear();
   [0, 1, 2, 3].forEach(t => unlockedTiers.add(t));
 }
@@ -269,6 +300,7 @@ export function checkGameOver(dangerY) {
     const { body } = entry;
     if (body.isMerging) continue;
     if (entry.isBomb) continue; // bomb balls don't cause game over
+    if (entry.isGhost) continue; // ghost balls don't cause game over
 
     // Ignore recently spawned balls (give them time to fall)
     if (now - body.createdAt < 1500) continue;
