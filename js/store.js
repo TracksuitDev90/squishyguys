@@ -16,13 +16,21 @@ export const STORE_ITEMS = [
     basePrice: 200,
     icon: '\u2B06', // ⬆
   },
+  {
+    id: 'ghostBall',
+    name: 'GHOST',
+    desc: 'Drop a ghost ball that phases through others',
+    basePrice: 100,
+    icon: '\u25C7', // ◇
+  },
 ];
 
 // Track how many times each item has been bought this game (for price scaling)
-let purchaseCounts = { colorBomb: 0, cupExtend: 0 };
+let purchaseCounts = { colorBomb: 0, cupExtend: 0, ghostBall: 0 };
 
 // Active state
 let bombQueued = false; // next drop will be a bomb ball
+let ghostQueued = false; // next drop will be a ghost ball
 let cupExtensions = 0;
 const CUP_EXTEND_PX = 35; // how much each extension adds
 
@@ -48,6 +56,8 @@ export function purchase(itemId, currentScore) {
     bombQueued = true;
   } else if (itemId === 'cupExtend') {
     cupExtensions++;
+  } else if (itemId === 'ghostBall') {
+    ghostQueued = true;
   }
 
   return { success: true, cost: price };
@@ -61,6 +71,14 @@ export function consumeBombQueue() {
   bombQueued = false;
 }
 
+export function isGhostQueued() {
+  return ghostQueued;
+}
+
+export function consumeGhostQueue() {
+  ghostQueued = false;
+}
+
 export function getCupExtensions() {
   return cupExtensions;
 }
@@ -70,7 +88,8 @@ export function getCupExtendPx() {
 }
 
 export function reset() {
-  purchaseCounts = { colorBomb: 0, cupExtend: 0 };
+  purchaseCounts = { colorBomb: 0, cupExtend: 0, ghostBall: 0 };
   bombQueued = false;
+  ghostQueued = false;
   cupExtensions = 0;
 }

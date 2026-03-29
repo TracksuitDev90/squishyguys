@@ -62,6 +62,16 @@ function setup() {
     Audio.playBounce(speed);
   });
 
+  // Ghost ball auto-activates on floor hit
+  Physics.onFloorCollision((body) => {
+    const ghost = Balls.getActiveGhost();
+    if (ghost && ghost.body.id === body.id) {
+      Balls.activateGhost();
+      Audio.playMerge(ghost.tierIndex, 1);
+      Particles.emitSpawnPop(body.position.x, body.position.y, ghost.tierIndex);
+    }
+  });
+
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
 
@@ -166,6 +176,7 @@ function updateDangerLevel() {
     const { body } = entry;
     if (body.isMerging) continue;
     if (entry.isBomb) continue; // bomb balls don't contribute to danger
+    if (entry.isGhost) continue; // ghost balls don't contribute to danger
     if (now - body.createdAt < 1500) continue;
 
     const tierRadius = BALL_TIERS[body.tierIndex].radius;
@@ -192,17 +203,37 @@ function loop(timestamp) {
   lastTime = timestamp;
 
   if (gameState === 'playing') {
-    // Handle drop
+    // Handle drop / ghost activation
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
       const now = performance.now();
-      if (now - lastDropTime >= DROP_COOLDOWN_MS) {
+
+      // If a ghost ball is actively falling, tap activates it
+      const activeGhost = Balls.getActiveGhost();
+      if (activeGhost) {
+        Balls.activateGhost();
+        Audio.playMerge(activeGhost.tierIndex, 1);
+        Particles.emitSpawnPop(
+          activeGhost.body.position.x,
+          activeGhost.body.position.y,
+          activeGhost.tierIndex
+        );
+      } else if (now - lastDropTime >= DROP_COOLDOWN_MS) {
         if (Store.isBombQueued()) {
           // Drop a bomb ball instead of normal
           Balls.spawnBombBall(Input.state.pointerX);
           Particles.emitSpawnPop(Input.state.pointerX, 120, 0);
           Audio.playDrop(7); // deeper sound for bomb
           Store.consumeBombQueue();
+        } else if (Store.isGhostQueued()) {
+          // Drop a ghost ball with the current drop tier color
+          Balls.spawnGhostBall(Input.state.pointerX, currentDropTier);
+          Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
+          Audio.playDrop(currentDropTier);
+          Store.consumeGhostQueue();
+
+          currentDropTier = nextDropTier;
+          nextDropTier = Balls.getNextDropTier();
         } else {
           Balls.spawnBall(Input.state.pointerX, currentDropTier);
           Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
@@ -294,14 +325,18 @@ function loop(timestamp) {
     isTouchDevice: Input.getIsTouchDevice(),
     muted: Audio.isMuted(),
     bombQueued: Store.isBombQueued(),
+    ghostQueued: Store.isGhostQueued(),
+    hasActiveGhost: !!Balls.getActiveGhost(),
     cupExtendPx: Store.getCupExtendPx(),
     storePrices: {
       colorBomb: Store.getPrice('colorBomb'),
       cupExtend: Store.getPrice('cupExtend'),
+      ghostBall: Store.getPrice('ghostBall'),
     },
     storeAffordable: {
       colorBomb: Store.canAfford('colorBomb', Score.current),
       cupExtend: Store.canAfford('cupExtend', Score.current),
+      ghostBall: Store.canAfford('ghostBall', Score.current),
     },
   });
 }

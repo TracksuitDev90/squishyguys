@@ -9,9 +9,15 @@ import {
 
 const { Engine, World, Bodies, Body, Events, Composite } = Matter;
 
+// Collision filter categories
+const COL_WALL = 0x0001;
+const COL_BALL = 0x0002;
+const COL_GHOST = 0x0004;
+
 let engine;
 let collisionCallback = null;
 let wallCollisionCallback = null;
+let floorCollisionCallback = null;
 let cupBodies = [];
 
 export function init() {
@@ -66,7 +72,7 @@ function buildCup() {
     CUP_BOTTOM_Y + CUP_WALL_THICKNESS / 2,
     CUP_RIGHT_X - CUP_LEFT_X + CUP_WALL_THICKNESS * 2,
     CUP_WALL_THICKNESS,
-    wallOptions
+    { ...wallOptions, label: 'cup-floor' }
   );
 
   // Invisible ceiling walls to keep things from flying out sideways
@@ -122,7 +128,7 @@ export function extendCup(totalExtendPx) {
     (CUP_LEFT_X + CUP_RIGHT_X) / 2,
     CUP_BOTTOM_Y + CUP_WALL_THICKNESS / 2,
     CUP_RIGHT_X - CUP_LEFT_X + CUP_WALL_THICKNESS * 2,
-    CUP_WALL_THICKNESS, wallOptions
+    CUP_WALL_THICKNESS, { ...wallOptions, label: 'cup-floor' }
   );
   const leftCeiling = Bodies.rectangle(
     CUP_LEFT_X / 2, effectiveTopY - 80,
@@ -167,6 +173,7 @@ export function createBallBody(x, y, tierIndex) {
     friction,
     density: BALL_DENSITY,
     label: 'ball',
+    collisionFilter: { category: COL_BALL, mask: COL_WALL | COL_BALL },
   });
 
   // Custom properties
@@ -184,7 +191,8 @@ export function createBombBody(x, y) {
     restitution: 0.2,
     friction: 0.03,
     density: BALL_DENSITY,
-    label: 'ball', // still a 'ball' for collision detection
+    label: 'ball',
+    collisionFilter: { category: COL_BALL, mask: COL_WALL | COL_BALL },
   });
 
   body.isBomb = true;
@@ -195,6 +203,32 @@ export function createBombBody(x, y) {
 
   Composite.add(engine.world, body);
   return body;
+}
+
+export function createGhostBody(x, y, tierIndex) {
+  const tier = BALL_TIERS[tierIndex];
+  const body = Bodies.circle(x, y, tier.radius, {
+    restitution: 0.2,
+    friction: 0.03,
+    density: BALL_DENSITY,
+    frictionAir: 0.04, // falls slower than normal balls
+    label: 'ball',
+    collisionFilter: { category: COL_GHOST, mask: COL_WALL },
+  });
+  body.tierIndex = tierIndex;
+  body.isMerging = false;
+  body.isGhost = true;
+  body.createdAt = performance.now();
+  body.aboveDangerSince = null;
+  Composite.add(engine.world, body);
+  return body;
+}
+
+export function activateGhostBody(body) {
+  body.collisionFilter.category = COL_BALL;
+  body.collisionFilter.mask = COL_WALL | COL_BALL;
+  body.isGhost = false;
+  body.frictionAir = 0.01; // reset to normal air friction
 }
 
 export function removeBody(body) {
@@ -225,16 +259,32 @@ function registerCollisionHandler() {
       }
 
       // Ball-wall collision (for bounce sounds)
+      const isWallA = bodyA.label === 'cup-wall' || bodyA.label === 'cup-floor' || bodyA.label === 'boundary';
+      const isWallB = bodyB.label === 'cup-wall' || bodyB.label === 'cup-floor' || bodyB.label === 'boundary';
+
       if (wallCollisionCallback) {
         let ball = null;
-        if (bodyA.label === 'ball' && (bodyB.label === 'cup-wall' || bodyB.label === 'boundary')) {
+        if (bodyA.label === 'ball' && isWallB) {
           ball = bodyA;
-        } else if (bodyB.label === 'ball' && (bodyA.label === 'cup-wall' || bodyA.label === 'boundary')) {
+        } else if (bodyB.label === 'ball' && isWallA) {
           ball = bodyB;
         }
         if (ball) {
           const speed = Math.sqrt(ball.velocity.x ** 2 + ball.velocity.y ** 2);
           wallCollisionCallback(ball, speed);
+        }
+      }
+
+      // Floor collision (for ghost ball activation)
+      if (floorCollisionCallback) {
+        let ball = null;
+        if (bodyA.label === 'ball' && bodyB.label === 'cup-floor') {
+          ball = bodyA;
+        } else if (bodyB.label === 'ball' && bodyA.label === 'cup-floor') {
+          ball = bodyB;
+        }
+        if (ball && ball.isGhost) {
+          floorCollisionCallback(ball);
         }
       }
     }
@@ -247,6 +297,10 @@ export function onCollision(callback) {
 
 export function onWallCollision(callback) {
   wallCollisionCallback = callback;
+}
+
+export function onFloorCollision(callback) {
+  floorCollisionCallback = callback;
 }
 
 // ── Step ────────────────────────────────────────────────────────
