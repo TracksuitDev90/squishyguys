@@ -158,14 +158,14 @@ export function resetCup() {
 export function createBallBody(x, y, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
 
-  // Smaller balls (white, red, yellow, orange) are squishier/gooier —
-  // slightly less friction so they slide between others better
+  // Smaller balls are bouncier and squishier, larger balls feel heavier/fluid
+  // Bounce: white=0.55, gradually decreasing to 0.1 for the biggest balls
+  const restitution = Math.max(0.1, 0.55 - tierIndex * 0.06);
+  // Friction: smaller balls slide more easily between others
   let friction = BALL_FRICTION;
-  let restitution = BALL_RESTITUTION;
   if (tierIndex <= 3) {
-    const squishiness = 1 - (tierIndex / 3); // 1.0 for white, 0 for orange
+    const squishiness = 1 - (tierIndex / 3);
     friction = BALL_FRICTION * (0.4 + 0.6 * (1 - squishiness)); // white=0.02, orange=0.05
-    restitution = BALL_RESTITUTION + squishiness * 0.15; // white=0.45, orange=0.3
   }
 
   const body = Bodies.circle(x, y, tier.radius, {
