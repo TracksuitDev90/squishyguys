@@ -140,19 +140,21 @@ function triggerBombEffect(bombEntry, targetEntry) {
   // Can't bomb rainbows
   if (targetTier >= BALL_TIERS.length - 1) return 0;
 
-  // Remove the bomb ball
-  activeBalls.delete(bombEntry.body.id);
-  Physics.removeBody(bombEntry.body);
-
-  // Gather all balls of the target tier
+  // Gather all balls of the target tier (before removing bomb)
   const targets = [];
   for (const [id, entry] of activeBalls) {
+    if (entry === bombEntry) continue; // skip the bomb itself
     if (entry.tierIndex === targetTier && !entry.body.isMerging) {
       targets.push({ id, body: entry.body });
     }
   }
 
+  // Need at least 2 balls to merge — don't consume the bomb if not enough
   if (targets.length < 2) return 0;
+
+  // Remove the bomb ball (only after confirming we have targets)
+  activeBalls.delete(bombEntry.body.id);
+  Physics.removeBody(bombEntry.body);
 
   // Calculate center point
   const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
