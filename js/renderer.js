@@ -649,7 +649,7 @@ function pseudoRand(seed) {
   return x - Math.floor(x);
 }
 
-// ── Solid Ball ──────────────────────────────────────────────────
+// ── Solid Ball (fruit-themed) ───────────────────────────────────
 function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   // Outer glow
   const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.4);
@@ -690,6 +690,9 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  // Fruit skin texture goes under the gloss so highlights read on top
+  drawFruitSkin(tierIndex, r, ballId);
+
   // Per-ball randomized highlights
   const hl = ballId != null ? getBallHighlights(ballId) : {
     primaryX: -0.2, primaryY: -0.28, primaryW: 0.4, primaryH: 0.22,
@@ -715,6 +718,270 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   ctx.beginPath();
   ctx.ellipse(r * hl.shadowX, r * hl.shadowY, r * 0.5, r * 0.18, hl.shadowAngle, 0, Math.PI * 2);
   ctx.fill();
+
+  // Stems, leaves, and crowns sit on top (and may poke past the edge)
+  drawFruitTopper(tierIndex, r);
+}
+
+// ── Fruit Details ───────────────────────────────────────────────
+// Cartoony fruit dressing layered onto the squishy ball base.
+// Everything is drawn in ball-local space, so it squishes, spins,
+// and wobbles along with the ball — that's the charm.
+
+function drawFruitSkin(tierIndex, r, ballId) {
+  const name = BALL_TIERS[tierIndex].name;
+  const seed = (ballId != null ? ballId : 7) * 101;
+
+  ctx.save();
+  // Keep skin texture inside the ball body
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.97, 0, Math.PI * 2);
+  ctx.clip();
+
+  switch (name) {
+    case 'coconut': {
+      // Husk fibre flecks
+      ctx.strokeStyle = 'rgba(150, 120, 70, 0.28)';
+      ctx.lineWidth = r * 0.05;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 7; i++) {
+        const a = pseudoRand(seed + i * 3) * Math.PI * 2;
+        const d = (0.25 + pseudoRand(seed + i * 5) * 0.6) * r;
+        const x = Math.cos(a) * d;
+        const y = Math.sin(a) * d;
+        const len = r * (0.12 + pseudoRand(seed + i * 7) * 0.15);
+        const tilt = pseudoRand(seed + i * 11) * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(x - Math.cos(tilt) * len, y - Math.sin(tilt) * len);
+        ctx.lineTo(x + Math.cos(tilt) * len, y + Math.sin(tilt) * len);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'banana': {
+      // Peel ridge lines curving around the ball
+      ctx.strokeStyle = 'rgba(160, 120, 20, 0.30)';
+      ctx.lineWidth = r * 0.045;
+      for (const off of [-0.42, 0, 0.42]) {
+        ctx.beginPath();
+        ctx.moveTo(off * r * 1.2, -r * 0.92);
+        ctx.quadraticCurveTo(off * r * 2.0, 0, off * r * 1.2, r * 0.92);
+        ctx.stroke();
+      }
+      // Ripeness freckles
+      ctx.fillStyle = 'rgba(130, 90, 30, 0.4)';
+      for (let i = 0; i < 5; i++) {
+        const a = pseudoRand(seed + i * 13) * Math.PI * 2;
+        const d = (0.3 + pseudoRand(seed + i * 17) * 0.55) * r;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d,
+                r * (0.03 + pseudoRand(seed + i * 19) * 0.03), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'orange': {
+      // Peel pores
+      ctx.fillStyle = 'rgba(150, 75, 0, 0.22)';
+      for (let i = 0; i < 14; i++) {
+        const a = pseudoRand(seed + i * 3) * Math.PI * 2;
+        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.85;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.035, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'watermelon': {
+      // Dark wavy rind stripes converging at the poles
+      ctx.strokeStyle = 'rgba(20, 105, 55, 0.85)';
+      ctx.lineCap = 'round';
+      for (const lon of [-0.62, -0.21, 0.21, 0.62]) {
+        ctx.lineWidth = r * (0.13 - Math.abs(lon) * 0.05);
+        ctx.beginPath();
+        const steps = 14;
+        for (let s = 0; s <= steps; s++) {
+          const t = (s / steps) * 2 - 1;                 // -1 top pole → 1 bottom
+          const bulge = Math.sqrt(Math.max(1 - t * t, 0));
+          const wave = Math.sin(t * 7 + lon * 20) * r * 0.045;
+          const x = (lon * r * 1.35 + wave) * bulge;
+          const y = t * r * 0.96;
+          if (s === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'blueberry': {
+      // Dusty "bloom" — the pale frost real blueberries have
+      const bloom = ctx.createRadialGradient(-r * 0.25, -r * 0.2, r * 0.1, -r * 0.1, 0, r * 1.05);
+      bloom.addColorStop(0, 'rgba(210, 225, 250, 0.30)');
+      bloom.addColorStop(0.55, 'rgba(210, 225, 250, 0.10)');
+      bloom.addColorStop(1, 'rgba(210, 225, 250, 0)');
+      ctx.fillStyle = bloom;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'grape': {
+      // Waxy bloom sheen
+      const bloom = ctx.createRadialGradient(r * 0.25, -r * 0.3, r * 0.05, r * 0.15, -r * 0.15, r * 0.9);
+      bloom.addColorStop(0, 'rgba(230, 210, 250, 0.22)');
+      bloom.addColorStop(0.6, 'rgba(230, 210, 250, 0.07)');
+      bloom.addColorStop(1, 'rgba(230, 210, 250, 0)');
+      ctx.fillStyle = bloom;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'plum': {
+      // Warm blush on one cheek
+      const blush = ctx.createRadialGradient(r * 0.35, r * 0.15, r * 0.05, r * 0.35, r * 0.15, r * 0.75);
+      blush.addColorStop(0, 'rgba(220, 90, 110, 0.30)');
+      blush.addColorStop(1, 'rgba(220, 90, 110, 0)');
+      ctx.fillStyle = blush;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Cleft crease from pole to pole
+      ctx.strokeStyle = 'rgba(90, 30, 100, 0.45)';
+      ctx.lineWidth = r * 0.05;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.06, -r * 0.94);
+      ctx.quadraticCurveTo(-r * 0.42, 0, -r * 0.06, r * 0.94);
+      ctx.stroke();
+      break;
+    }
+  }
+  ctx.restore();
+}
+
+function drawFruitTopper(tierIndex, r) {
+  const name = BALL_TIERS[tierIndex].name;
+
+  switch (name) {
+    case 'coconut': {
+      // The three classic coconut "eyes"
+      ctx.fillStyle = 'rgba(120, 90, 55, 0.8)';
+      for (const e of [{ x: -0.16, y: -0.48 }, { x: 0.16, y: -0.48 }, { x: 0, y: -0.24 }]) {
+        ctx.beginPath();
+        ctx.ellipse(e.x * r, e.y * r, r * 0.09, r * 0.11, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'cherry': {
+      // Curvy stem + tiny leaf
+      ctx.strokeStyle = '#7A4A21';
+      ctx.lineWidth = r * 0.11;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.85);
+      ctx.quadraticCurveTo(r * 0.12, -r * 1.25, r * 0.42, -r * 1.38);
+      ctx.stroke();
+      ctx.save();
+      ctx.translate(r * 0.5, -r * 1.34);
+      ctx.rotate(0.5);
+      ctx.fillStyle = '#4CAF50';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.22, r * 0.1, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
+    case 'banana': {
+      // Stem nub up top, dark tip below
+      ctx.fillStyle = '#8A6420';
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.94, r * 0.13, r * 0.1, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(80, 55, 20, 0.75)';
+      ctx.beginPath();
+      ctx.ellipse(0, r * 0.94, r * 0.09, r * 0.06, 0, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'orange': {
+      // Stem stub + glossy leaf
+      ctx.fillStyle = '#7A5230';
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.93, r * 0.08, r * 0.06, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.save();
+      ctx.translate(r * 0.24, -r * 0.98);
+      ctx.rotate(0.35);
+      ctx.fillStyle = '#3E9B4F';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.24, r * 0.11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30, 90, 45, 0.7)';
+      ctx.lineWidth = r * 0.02;
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.2, 0);
+      ctx.lineTo(r * 0.2, 0);
+      ctx.stroke();
+      ctx.restore();
+      break;
+    }
+    case 'watermelon': {
+      // Curly stem
+      ctx.strokeStyle = '#5C7A2E';
+      ctx.lineWidth = r * 0.055;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.92);
+      ctx.quadraticCurveTo(r * 0.1, -r * 1.12, r * 0.24, -r * 1.08);
+      ctx.stroke();
+      break;
+    }
+    case 'blueberry': {
+      // Star-shaped calyx crown
+      ctx.save();
+      ctx.translate(0, -r * 0.52);
+      ctx.fillStyle = 'rgba(25, 35, 90, 0.75)';
+      ctx.beginPath();
+      const spikes = 5;
+      for (let i = 0; i < spikes * 2; i++) {
+        const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+        const rad = (i % 2 === 0 ? 0.2 : 0.09) * r;
+        ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad * 0.7);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(15, 22, 60, 0.8)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.055, r * 0.04, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      break;
+    }
+    case 'grape': {
+      // Woody stem nub
+      ctx.strokeStyle = '#6E4A25';
+      ctx.lineWidth = r * 0.06;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.9);
+      ctx.lineTo(r * 0.06, -r * 1.08);
+      ctx.stroke();
+      break;
+    }
+    case 'plum': {
+      // Stem sunk into the top dimple
+      ctx.strokeStyle = '#6E4A25';
+      ctx.lineWidth = r * 0.05;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.06, -r * 0.88);
+      ctx.lineTo(-r * 0.02, -r * 1.06);
+      ctx.stroke();
+      break;
+    }
+  }
 }
 
 // ── Chrome Ball (metallic sheen) ────────────────────────────────
@@ -800,7 +1067,7 @@ function drawRainbowBall(r) {
 
   // Animated rainbow conic gradient
   const grad = ctx.createConicGradient(time * 1.5, 0, 0);
-  const colors = ['#E74C3C', '#E67E22', '#F1C40F', '#2ECC71', '#3498DB', '#6C3483', '#A569BD', '#E74C3C'];
+  const colors = ['#E8394F', '#F5921E', '#F7D14E', '#2ECC71', '#5578DE', '#7D3C98', '#A569BD', '#E8394F'];
   for (let i = 0; i < colors.length; i++) {
     grad.addColorStop(i / (colors.length - 1), colors[i]);
   }
