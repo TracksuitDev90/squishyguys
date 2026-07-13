@@ -85,8 +85,8 @@ const recentDrops = [];
 
 export function getNextDropTier() {
   // Build weighted pool from unlocked tiers that are allowed as drops.
-  // As the player unlocks more tiers, white's dominance fades and
-  // mid-tier balls become more common.
+  // As the player unlocks more tiers, coconut's dominance fades and
+  // mid-tier fruits become more common.
   const unlockCount = Math.min(unlockedTiers.size, BALL_TIERS.length);
 
   let totalWeight = 0;
@@ -96,14 +96,14 @@ export function getNextDropTier() {
     if (unlockedTiers.has(i) && DROP_WEIGHTS[i] > 0) {
       let weight = DROP_WEIGHTS[i];
 
-      // Scale white down as more tiers unlock (4 base → 10 max unlocks)
+      // Scale coconut down as more tiers unlock (4 base → 10 max unlocks)
       // At 4 unlocks: full weight. At 7+: roughly halved.
       if (i === 0 && unlockCount > 4) {
         const reduction = Math.min((unlockCount - 4) * 0.12, 0.55);
         weight = Math.round(weight * (1 - reduction));
       }
 
-      // Boost tiers 1-4 (red through green) slightly as game progresses
+      // Boost tiers 1-4 (cherry through watermelon) slightly as game progresses
       if (i >= 1 && i <= 4 && unlockCount > 4) {
         const boost = 1 + Math.min((unlockCount - 4) * 0.08, 0.4);
         weight = Math.round(weight * boost);
