@@ -74,11 +74,15 @@ export function reset() {
   activeBalls.clear();
   mergeEffects.length = 0;
   activeGhostBall = null;
+  recentDrops.length = 0;
   unlockedTiers.clear();
   [0, 1, 2, 3].forEach(t => unlockedTiers.add(t));
 }
 
 // ── Drop Tier Selection ─────────────────────────────────────────
+// Last two tiers handed to the drop queue, newest first (anti-streak).
+const recentDrops = [];
+
 export function getNextDropTier() {
   // Build weighted pool from unlocked tiers that are allowed as drops.
   // As the player unlocks more tiers, white's dominance fades and
@@ -105,6 +109,12 @@ export function getNextDropTier() {
         weight = Math.round(weight * boost);
       }
 
+      // Anti-streak: the same tier twice in a row becomes much less
+      // likely a third time, so drops feel varied rather than random-clumpy
+      if (recentDrops.length >= 2 && recentDrops[0] === i && recentDrops[1] === i) {
+        weight = Math.max(1, Math.round(weight * 0.3));
+      }
+
       pool.push({ tier: i, weight });
       totalWeight += weight;
     }
@@ -113,34 +123,44 @@ export function getNextDropTier() {
   if (pool.length === 0) return 0;
 
   let roll = Math.random() * totalWeight;
+  let picked = pool[pool.length - 1].tier;
   for (const entry of pool) {
     roll -= entry.weight;
-    if (roll <= 0) return entry.tier;
+    if (roll <= 0) {
+      picked = entry.tier;
+      break;
+    }
   }
-  return pool[pool.length - 1].tier;
+
+  recentDrops.unshift(picked);
+  if (recentDrops.length > 2) recentDrops.pop();
+  return picked;
 }
 
 // ── Collision → Merge ───────────────────────────────────────────
+// Returns { points, tierIndex, x, y } when a merge happened, else null.
 export function handleCollision(bodyA, bodyB) {
   const ballA = activeBalls.get(bodyA.id);
   const ballB = activeBalls.get(bodyB.id);
 
-  if (!ballA || !ballB) return 0;
+  if (!ballA || !ballB) return null;
 
   // Check for bomb collision
   if (ballA.isBomb || ballB.isBomb) {
     const bomb = ballA.isBomb ? ballA : ballB;
     const target = ballA.isBomb ? ballB : ballA;
-    return triggerBombEffect(bomb, target);
+    triggerBombEffect(bomb, target);
+    return null; // bomb points are awarded when the suck-in completes
   }
 
-  if (ballA.tierIndex !== ballB.tierIndex) return 0;
-  if (bodyA.isMerging || bodyB.isMerging) return 0;
+  if (ballA.tierIndex !== ballB.tierIndex) return null;
+  if (bodyA.isMerging || bodyB.isMerging) return null;
+  if (ballA.isGhost || ballB.isGhost) return null;
 
   const tierIndex = ballA.tierIndex;
 
   // Rainbow can't merge further
-  if (tierIndex >= BALL_TIERS.length - 1) return 0;
+  if (tierIndex >= BALL_TIERS.length - 1) return null;
 
   return performMerge([bodyA, bodyB], tierIndex);
 }
@@ -154,10 +174,15 @@ export function getActiveBombEffect() {
 }
 
 function triggerBombEffect(bombEntry, targetEntry) {
+  // One bomb effect at a time — a second trigger mid-suck would strand
+  // the first effect's balls with isMerging stuck on
+  if (activeBombEffect) return;
+
   const targetTier = targetEntry.tierIndex;
 
-  // Can't bomb rainbows
-  if (targetTier >= BALL_TIERS.length - 1) return 0;
+  // Can't bomb rainbows or ghost balls
+  if (targetTier >= BALL_TIERS.length - 1) return;
+  if (targetEntry.isGhost) return;
 
   // Gather all balls of the target tier (before removing bomb)
   const targets = [];
@@ -169,7 +194,7 @@ function triggerBombEffect(bombEntry, targetEntry) {
   }
 
   // Need at least 2 balls to merge — don't consume the bomb if not enough
-  if (targets.length < 2) return 0;
+  if (targets.length < 2) return;
 
   // Remove the bomb ball (only after confirming we have targets)
   activeBalls.delete(bombEntry.body.id);
@@ -196,8 +221,6 @@ function triggerBombEffect(bombEntry, targetEntry) {
     startTime: performance.now(),
     suckDuration: 450, // ms to suck in
   };
-
-  return 0; // Points awarded later when suck-in completes
 }
 
 // Called each frame from game loop. Returns { points, tier, x, y } when merge happens.
@@ -231,7 +254,8 @@ export function updateBombEffect() {
       const a = targets[i * 2];
       const b = targets[i * 2 + 1];
       if (!activeBalls.has(a.id) || !activeBalls.has(b.id)) continue;
-      totalPoints += performMerge([a.body, b.body], targetTier);
+      const merge = performMerge([a.body, b.body], targetTier);
+      totalPoints += merge.points;
     }
 
     // Odd ball left over — unmark it
@@ -265,9 +289,6 @@ export function updateBombEffect() {
 
   return null; // Still sucking in
 }
-
-// Expose for external use (returns the tier hit, for particles)
-export let lastBombTier = -1;
 
 function performMerge(bodies, tierIndex) {
   const nextTier = tierIndex + 1;
@@ -309,7 +330,7 @@ function performMerge(bodies, tierIndex) {
     duration: 600,
   });
 
-  return nextTierData.points;
+  return { points: nextTierData.points, tierIndex: nextTier, x: mx, y: my };
 }
 
 // ── Game Over Check ─────────────────────────────────────────────

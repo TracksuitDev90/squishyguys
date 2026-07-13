@@ -23,6 +23,10 @@ let cupBodies = [];
 export function init() {
   engine = Engine.create({
     gravity: { x: 0, y: GRAVITY },
+    // Extra solver iterations keep tall stacks of circles stable
+    // (less micro-jitter → balls read as calm and heavy, not buzzy)
+    positionIterations: 10,
+    velocityIterations: 8,
   });
 
   buildCup();
@@ -289,6 +293,24 @@ function registerCollisionHandler() {
       }
     }
   });
+
+  // Safety net: collisionStart alone misses pairs that were already
+  // touching when they became mergeable (e.g. the odd ball left over
+  // after a bomb, or a pair overlapping while flagged isMerging).
+  // Re-check resting same-tier contacts every step.
+  Events.on(engine, 'collisionActive', (event) => {
+    if (!collisionCallback) return;
+    for (const pair of event.pairs) {
+      const { bodyA, bodyB } = pair;
+      if (bodyA.label !== 'ball' || bodyB.label !== 'ball') continue;
+      if (bodyA.isMerging || bodyB.isMerging) continue;
+      const mergeable = bodyA.tierIndex === bodyB.tierIndex && bodyA.tierIndex >= 0;
+      const bombTouch = bodyA.isBomb || bodyB.isBomb;
+      if (mergeable || bombTouch) {
+        collisionCallback(bodyA, bodyB);
+      }
+    }
+  });
 }
 
 export function onCollision(callback) {
@@ -304,6 +326,16 @@ export function onFloorCollision(callback) {
 }
 
 // ── Step ────────────────────────────────────────────────────────
+// Matter.js wants a fixed timestep — feeding it raw frame deltas makes
+// stacks jittery and behavior framerate-dependent. Accumulate real time
+// and step in fixed 60 Hz slices instead.
+const FIXED_DT = 1000 / 60;
+let accumulator = 0;
+
 export function step(delta) {
-  Engine.update(engine, delta);
+  accumulator = Math.min(accumulator + delta, FIXED_DT * 4);
+  while (accumulator >= FIXED_DT) {
+    Engine.update(engine, FIXED_DT);
+    accumulator -= FIXED_DT;
+  }
 }

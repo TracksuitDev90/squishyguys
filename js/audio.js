@@ -299,6 +299,12 @@ export function startDangerHum() {
 }
 
 export function updateDangerHum(level) {
+  // Lazily start the hum — audioCtx exists once the player has dropped a
+  // ball, and danger can only build after that. (Previously the hum never
+  // played during the first game because it was only started on restart.)
+  if (level > 0 && !dangerOsc && audioCtx) {
+    startDangerHum();
+  }
   if (!dangerGain) return;
   dangerGain.gain.setTargetAtTime(level * 0.08, audioCtx.currentTime, 0.1);
 }

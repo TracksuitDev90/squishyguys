@@ -3,7 +3,7 @@ import {
   GAME_WIDTH, GAME_HEIGHT,
   CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y,
   CUP_WALL_THICKNESS, DANGER_LINE_Y, DROP_Y,
-  BALL_TIERS, SQUISH_FACTOR,
+  BALL_TIERS,
 } from './config.js';
 import * as Particles from './particles.js';
 
@@ -20,6 +20,15 @@ let wobbleSeeds = [];
 // Per-ball squish state (keyed by body.id)
 const ballSquish = new Map();
 
+// Cached static gradients (built once — cheaper and consistent)
+let bgGradient = null;
+let spotlightGradient = null;
+let vignetteGradient = null;
+
+// Ambient floating dust motes for atmosphere
+const dustMotes = [];
+const DUST_COUNT = 22;
+
 export function init(canvasEl) {
   canvas = canvasEl;
   ctx = canvas.getContext('2d');
@@ -28,8 +37,45 @@ export function init(canvasEl) {
     wobbleSeeds.push((Math.random() - 0.5) * 3);
   }
 
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dustMotes.push({
+      x: Math.random() * GAME_WIDTH,
+      y: Math.random() * GAME_HEIGHT,
+      size: 0.6 + Math.random() * 1.6,
+      speed: 0.08 + Math.random() * 0.18,
+      drift: (Math.random() - 0.5) * 0.15,
+      phase: Math.random() * Math.PI * 2,
+      alpha: 0.04 + Math.random() * 0.08,
+    });
+  }
+
+  buildStaticGradients();
   handleResize();
   window.addEventListener('resize', handleResize);
+}
+
+function buildStaticGradients() {
+  bgGradient = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
+  bgGradient.addColorStop(0, '#12122b');
+  bgGradient.addColorStop(0.45, '#171f3f');
+  bgGradient.addColorStop(0.8, '#1c3a63');
+  bgGradient.addColorStop(1, '#1f4d7d');
+
+  // Soft spotlight behind the cup — draws the eye to the play area
+  const cx = (CUP_LEFT_X + CUP_RIGHT_X) / 2;
+  const cy = (CUP_TOP_Y + CUP_BOTTOM_Y) / 2;
+  spotlightGradient = ctx.createRadialGradient(cx, cy, 40, cx, cy, 340);
+  spotlightGradient.addColorStop(0, 'rgba(120, 160, 255, 0.07)');
+  spotlightGradient.addColorStop(0.5, 'rgba(120, 160, 255, 0.03)');
+  spotlightGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+  // Vignette — darkened corners frame the scene
+  vignetteGradient = ctx.createRadialGradient(
+    GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_HEIGHT * 0.35,
+    GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_HEIGHT * 0.75
+  );
+  vignetteGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignetteGradient.addColorStop(1, 'rgba(2, 2, 12, 0.42)');
 }
 
 function handleResize() {
@@ -58,10 +104,11 @@ function handleResize() {
 export function render(state) {
   const shake = Particles.getScreenShake();
 
+  // Clear in un-shaken space so big shakes never leave stale pixels
+  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
   ctx.save();
   ctx.translate(shake.x, shake.y);
-
-  ctx.clearRect(-20, -20, GAME_WIDTH + 40, GAME_HEIGHT + 40);
 
   const cupExt = state.cupExtendPx || 0;
 
@@ -72,6 +119,10 @@ export function render(state) {
   drawBalls(state.balls, state.gameState);
   Particles.draw(ctx);
 
+  // Vignette sits above the scene but below the UI
+  ctx.fillStyle = vignetteGradient;
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
   if (state.gameState === 'playing') {
     if (!state.hasActiveGhost) {
       drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
@@ -79,7 +130,7 @@ export function render(state) {
     }
   }
 
-  drawScore(state.score, state.highScore, state.combo);
+  drawScore(state.score, state.bestScore, state.combo);
   drawMuteButton(state.muted);
 
   if (state.gameState === 'playing') {
@@ -87,7 +138,7 @@ export function render(state) {
   }
 
   if (state.gameState === 'gameover') {
-    drawGameOver(state.score, state.highScore, state.won);
+    drawGameOver(state.score, state.bestScore, state.bestCombo, state.won, state.isNewBest);
   }
 
   ctx.restore();
@@ -95,28 +146,29 @@ export function render(state) {
 
 // ── Background ──────────────────────────────────────────────────
 function drawBackground() {
-  const grad = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
-  grad.addColorStop(0, '#1a1a2e');
-  grad.addColorStop(0.5, '#16213e');
-  grad.addColorStop(1, '#1a4a7a');
-  ctx.fillStyle = grad;
+  ctx.fillStyle = bgGradient;
+  ctx.fillRect(-30, -30, GAME_WIDTH + 60, GAME_HEIGHT + 60);
+
+  ctx.fillStyle = spotlightGradient;
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-  // Subtle grid pattern (cheaper than dots)
-  ctx.strokeStyle = 'rgba(255,255,255,0.015)';
-  ctx.lineWidth = 0.5;
-  for (let x = 0; x < GAME_WIDTH; x += 30) {
+  // Slow-drifting dust motes give the scene depth and life
+  const t = performance.now() * 0.001;
+  for (const m of dustMotes) {
+    m.y -= m.speed;
+    m.x += m.drift + Math.sin(t + m.phase) * 0.08;
+    if (m.y < -4) { m.y = GAME_HEIGHT + 4; m.x = Math.random() * GAME_WIDTH; }
+    if (m.x < -4) m.x = GAME_WIDTH + 4;
+    if (m.x > GAME_WIDTH + 4) m.x = -4;
+
+    const twinkle = 0.7 + Math.sin(t * 1.5 + m.phase) * 0.3;
+    ctx.globalAlpha = m.alpha * twinkle;
+    ctx.fillStyle = '#cfe0ff';
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, GAME_HEIGHT);
-    ctx.stroke();
+    ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
+    ctx.fill();
   }
-  for (let y = 0; y < GAME_HEIGHT; y += 30) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(GAME_WIDTH, y);
-    ctx.stroke();
-  }
+  ctx.globalAlpha = 1;
 }
 
 // ── Danger Zone (red glow when approaching game over) ───────────
@@ -225,6 +277,12 @@ function drawDangerLine(dangerLevel, cupExt) {
   ctx.lineTo(CUP_RIGHT_X - 5, effectiveDangerY);
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // Small label so the line reads as a rule, not decoration
+  ctx.font = '11px "Patrick Hand", cursive';
+  ctx.fillStyle = `rgba(255, 90, 70, ${Math.min(alpha * 0.9, 1)})`;
+  ctx.textAlign = 'right';
+  ctx.fillText('DANGER', CUP_RIGHT_X - 8, effectiveDangerY - 5);
   ctx.restore();
 }
 
@@ -250,6 +308,14 @@ function drawBalls(ballMap, gameState) {
   // Sort by y position so lower balls draw on top (depth feel)
   const sorted = [...ballMap.values()].sort((a, b) => a.body.position.y - b.body.position.y);
 
+  // Pass 1: soft contact shadows under every solid ball
+  for (const entry of sorted) {
+    if (entry.isGhost) continue;
+    const r = entry.isBomb ? 16 : BALL_TIERS[entry.tierIndex].radius;
+    drawBallShadow(entry.body, r);
+  }
+
+  // Pass 2: the balls themselves
   for (const entry of sorted) {
     if (entry.isBomb) {
       drawBombBall(entry.body);
@@ -261,14 +327,28 @@ function drawBalls(ballMap, gameState) {
   }
 }
 
+function drawBallShadow(body, r) {
+  const { x, y } = body.position;
+  ctx.save();
+  ctx.fillStyle = 'rgba(4, 4, 18, 0.22)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + r * 0.85, r * 0.82, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function getSquishState(body) {
   if (!ballSquish.has(body.id)) {
     ballSquish.set(body.id, {
-      scaleX: 0.3, // Start small for spawn animation
+      scaleX: 0.3, // Start small for spawn animation (bomb/ghost path)
       scaleY: 0.3,
-      targetSX: 1,
-      targetSY: 1,
       spawnProgress: 0,
+      // Spring-based squash & stretch (solid balls)
+      squash: 0,       // >0 compressed along motion axis, <0 rebounding
+      squashVel: 0,    // spring velocity — this is what makes it jiggle
+      deformAngle: Math.PI / 2,
+      prevVx: 0,
+      prevVy: 0,
     });
   }
   return ballSquish.get(body.id);
@@ -280,55 +360,83 @@ function drawBall(body, tierIndex, gameState) {
   const r = tier.radius;
   const sq = getSquishState(body);
 
-  // ── Spawn scale-up animation ──────────────────────────────────
+  let sx = 1;
+  let sy = 1;
+  let deformAngle = sq.deformAngle;
+
   if (sq.spawnProgress < 1) {
+    // ── Spawn scale-up animation ────────────────────────────────
     sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
     const t = easeOutBack(sq.spawnProgress);
-    sq.targetSX = 1;
-    sq.targetSY = 1;
-    sq.scaleX = t;
-    sq.scaleY = t;
+    sx = t;
+    sy = t;
+    deformAngle = 0;
+    sq.prevVx = body.velocity.x;
+    sq.prevVy = body.velocity.y;
   } else {
-    // ── Velocity-based squish ────────────────────────────────────
+    // ── Velocity-aligned squash & stretch with spring recovery ──
     const vx = body.velocity.x;
     const vy = body.velocity.y;
     const speed = Math.sqrt(vx * vx + vy * vy);
 
-    // Smaller balls (white, red, yellow, orange) are gooier — more squish
-    const gooFactor = tierIndex <= 3 ? 1 + (3 - tierIndex) * 0.25 : 1; // white=1.75, red=1.5, yellow=1.25, orange=1.0
+    // Smaller balls are gooier: bigger deformation, floppier spring.
+    // Bigger balls deform less but carry visible weight.
+    const goo = tierIndex <= 3
+      ? 1 + (3 - tierIndex) * 0.28              // white=1.84 … orange=1.0
+      : Math.max(0.65, 1 - (tierIndex - 3) * 0.06);
 
-    // Collision squish: compress on impact
-    const impactSquish = Math.min(speed * 0.012 * gooFactor, 0.35);
-    const angle = Math.atan2(Math.abs(vy), Math.abs(vx) + 0.001);
-    const verticalness = angle / (Math.PI / 2); // 0=horizontal, 1=vertical
+    // Impact detection: a sudden velocity change means we hit something.
+    // Kick the squash spring proportionally, along the incoming direction.
+    const dvx = vx - sq.prevVx;
+    const dvy = vy - sq.prevVy;
+    const impact = Math.sqrt(dvx * dvx + dvy * dvy);
+    const prevSpeed = Math.sqrt(sq.prevVx * sq.prevVx + sq.prevVy * sq.prevVy);
 
-    sq.targetSX = 1 + impactSquish * verticalness;
-    sq.targetSY = 1 - impactSquish * verticalness;
-
-    // Also squish horizontally on horizontal impacts
-    if (verticalness < 0.5) {
-      sq.targetSX = 1 - impactSquish * (1 - verticalness) * 0.5;
-      sq.targetSY = 1 + impactSquish * (1 - verticalness) * 0.3;
+    if (impact > 1.2 && prevSpeed > 1.4) {
+      sq.squash = Math.min(sq.squash + impact * 0.045 * goo, 0.45);
+      sq.deformAngle = Math.atan2(sq.prevVy, sq.prevVx);
+    } else if (speed > 0.6) {
+      // While moving freely, deform along the direction of travel
+      sq.deformAngle = Math.atan2(vy, vx);
     }
 
-    // Spring back to 1,1 (jelly recovery) — gooier balls recover slower
-    const recovery = tierIndex <= 3 ? 0.15 - (3 - tierIndex) * 0.02 : 0.15; // white=0.09, larger=0.15
-    sq.scaleX += (sq.targetSX - sq.scaleX) * recovery;
-    sq.scaleY += (sq.targetSY - sq.scaleY) * recovery;
+    // Damped spring: overshoots past rest into a stretch, then settles —
+    // that overshoot IS the jelly wobble. Gooier balls = looser spring.
+    const stiffness = tierIndex <= 3 ? 0.16 + tierIndex * 0.02 : 0.22;
+    const damping = tierIndex <= 3 ? 0.78 : 0.7;
+    sq.squashVel += -sq.squash * stiffness;
+    sq.squashVel *= damping;
+    sq.squash += sq.squashVel;
+
+    // Free-fall stretch: elongate along the motion vector
+    const stretch = Math.min(speed * 0.011 * goo, 0.22);
+
+    const squash = Math.max(-0.22, Math.min(sq.squash, 0.45));
+    let along = 1 + stretch - squash;        // axis of motion
+    let perp = 1 - stretch * 0.55 + squash * 0.8; // bulge sideways on impact
 
     // Idle wobble (subtle breathing) — gooier balls wobble more
-    const wobbleAmp = tierIndex <= 3 ? 0.008 + (3 - tierIndex) * 0.004 : 0.008; // white=0.02, larger=0.008
+    const wobbleAmp = tierIndex <= 3 ? 0.007 + (3 - tierIndex) * 0.004 : 0.006;
     const wobbleTime = performance.now() * 0.002 + body.id * 1.7;
-    sq.scaleX += Math.sin(wobbleTime) * wobbleAmp;
-    sq.scaleY += Math.cos(wobbleTime * 1.3) * wobbleAmp;
+    along += Math.sin(wobbleTime) * wobbleAmp;
+    perp += Math.cos(wobbleTime * 1.3) * wobbleAmp;
+
+    sx = along;
+    sy = perp;
+    deformAngle = sq.deformAngle;
+
+    sq.prevVx = vx;
+    sq.prevVy = vy;
   }
 
   ctx.save();
   ctx.translate(x, y);
 
-  // Rotate with body angle for more life
-  ctx.rotate(body.angle);
-  ctx.scale(sq.scaleX, sq.scaleY);
+  // Deform in world space along the motion axis, then let the ball's
+  // own spin rotate the texture inside the deformed shape
+  ctx.rotate(deformAngle);
+  ctx.scale(sx, sy);
+  ctx.rotate(body.angle - deformAngle);
 
   // ── Draw based on tier type ───────────────────────────────────
   if (tier.name === 'rainbow') {
@@ -798,43 +906,8 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQ
   }
 }
 
-// ── Next Ball Preview (small, in corner) ────────────────────────
-function drawNextBall(tierIndex) {
-  if (tierIndex === undefined) return;
-
-  const tier = BALL_TIERS[tierIndex];
-  const previewR = Math.min(tier.radius * 0.5, 16);
-  const px = GAME_WIDTH - 35;
-  const py = 55;
-
-  ctx.save();
-
-  // Label
-  ctx.font = '11px "Patrick Hand", cursive';
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.textAlign = 'center';
-  ctx.fillText('NEXT', px, py - previewR - 8);
-
-  // Mini ball
-  ctx.globalAlpha = 0.6;
-  ctx.translate(px, py);
-
-  const miniScale = previewR / tier.radius;
-  ctx.scale(miniScale, miniScale);
-
-  if (tier.color === 'rainbow') {
-    drawRainbowBall(tier.radius);
-  } else if (tier.name === 'chrome') {
-    drawChromeBall(tier.radius);
-  } else {
-    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
-  }
-
-  ctx.restore();
-}
-
 // ── Score Display ───────────────────────────────────────────────
-function drawScore(score, highScore, combo) {
+function drawScore(score, bestScore, combo) {
   ctx.save();
   ctx.textAlign = 'center';
 
@@ -850,10 +923,10 @@ function drawScore(score, highScore, combo) {
   ctx.fillStyle = '#FFFFFF';
   ctx.fillText(score.toLocaleString(), GAME_WIDTH / 2, 60);
 
-  // High score
+  // All-time best score
   ctx.font = '14px "Patrick Hand", cursive';
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fillText(`Best Combo: ${highScore.toLocaleString()}`, GAME_WIDTH / 2, 80);
+  ctx.fillText(`BEST ${(bestScore || 0).toLocaleString()}`, GAME_WIDTH / 2, 80);
 
   // Combo indicator with scale animation
   if (combo > 1) {
@@ -926,62 +999,66 @@ function drawMuteButton(muted) {
 }
 
 // ── Game Over Overlay ───────────────────────────────────────────
-function drawGameOver(score, highScore, won) {
+function drawGameOver(score, bestScore, bestCombo, won, isNewBest) {
   ctx.save();
 
   // Animated dim overlay
   ctx.fillStyle = 'rgba(0,0,0,0.75)';
-  ctx.fillRect(-20, -20, GAME_WIDTH + 40, GAME_HEIGHT + 40);
+  ctx.fillRect(-30, -30, GAME_WIDTH + 60, GAME_HEIGHT + 60);
 
   ctx.textAlign = 'center';
   const cx = GAME_WIDTH / 2;
   const cy = GAME_HEIGHT / 2;
+  const time = performance.now() * 0.002;
 
   if (won) {
     // Rainbow win - cycling colors
-    const time = performance.now() * 0.002;
     ctx.font = 'bold 42px "Patrick Hand", cursive';
     ctx.fillStyle = `hsl(${(time * 60) % 360}, 85%, 65%)`;
-    ctx.fillText('RAINBOW!', cx, cy - 70);
+    ctx.fillText('RAINBOW!', cx, cy - 80);
 
     ctx.font = '24px "Patrick Hand", cursive';
     ctx.fillStyle = '#FFD700';
-    ctx.fillText('You did it!', cx, cy - 30);
-
-    // Sparkle emojis
-    ctx.font = '20px sans-serif';
-    const sparkleY = cy - 95;
-    ctx.fillText('*', cx - 80 + Math.sin(time * 3) * 5, sparkleY);
-    ctx.fillText('*', cx + 80 + Math.sin(time * 3 + 2) * 5, sparkleY);
+    ctx.fillText('You did it!', cx, cy - 44);
   } else {
     ctx.font = 'bold 42px "Patrick Hand", cursive';
     // Subtle pulse
     const pulse = 1 + Math.sin(performance.now() * 0.003) * 0.02;
     ctx.save();
-    ctx.translate(cx, cy - 70);
+    ctx.translate(cx, cy - 80);
     ctx.scale(pulse, pulse);
     ctx.fillStyle = '#E74C3C';
     ctx.fillText('GAME OVER', 0, 0);
     ctx.restore();
   }
 
-  // Score
-  ctx.font = '24px "Patrick Hand", cursive';
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillText(`Score: ${score.toLocaleString()}`, cx, cy + 10);
+  // New best celebration
+  if (isNewBest) {
+    const flash = 0.7 + Math.sin(performance.now() * 0.008) * 0.3;
+    ctx.font = 'bold 22px "Patrick Hand", cursive';
+    ctx.fillStyle = `rgba(255, 215, 0, ${flash})`;
+    ctx.fillText('NEW BEST!', cx, cy - 32);
+  }
 
-  // Best combo display
-  if (highScore > 0) {
-    ctx.font = '18px "Patrick Hand", cursive';
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillText(`Best Combo: ${highScore.toLocaleString()}`, cx, cy + 42);
+  // Score
+  ctx.font = '26px "Patrick Hand", cursive';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillText(`Score: ${score.toLocaleString()}`, cx, cy + 8);
+
+  // Best score + best combo
+  ctx.font = '17px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(`Best: ${(bestScore || 0).toLocaleString()}`, cx, cy + 38);
+  if (bestCombo > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fillText(`Best Combo: ${bestCombo.toLocaleString()}`, cx, cy + 62);
   }
 
   // Restart prompt with pulse
   const promptAlpha = 0.4 + Math.sin(performance.now() * 0.004) * 0.2;
   ctx.font = '18px "Patrick Hand", cursive';
   ctx.fillStyle = `rgba(255,255,255,${promptAlpha})`;
-  ctx.fillText('Tap to play again', cx, cy + 95);
+  ctx.fillText('Tap to play again', cx, cy + 105);
 
   ctx.restore();
 }

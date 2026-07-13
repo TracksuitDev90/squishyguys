@@ -40,12 +40,9 @@ export const BALL_TIERS = [
 ];
 
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
-// Higher tiers drop less frequently. Violet+ are too large to drop.
-export const DROP_WEIGHTS = [50, 30, 15, 8, 4, 2, 1, 0, 0, 0];
+// Higher tiers drop less frequently.
+export const DROP_WEIGHTS = [46, 28, 15, 8, 3];
 
-// Maximum tier that can ever appear as a drop (indigo = 6). Violet+ must be earned.
-export const MAX_DROP_TIER = 6;
-
-// Squish visual settings
-export const SQUISH_FACTOR = 0.15; // how much velocity affects squish visual
-export const SQUISH_RECOVERY = 0.1; // how fast squish recovers
+// Maximum tier that can ever appear as a drop (green = 4).
+// Everything larger must be earned through merging.
+export const MAX_DROP_TIER = 4;

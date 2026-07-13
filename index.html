@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#12122b">
+  <meta name="description" content="Squishy Guys — drop, squish and merge colorful jelly balls to reach the rainbow!">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Squishy Guys</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2255%22 r=%2240%22 fill=%22%232ECC71%22 stroke=%22%2327AE60%22 stroke-width=%224%22/><ellipse cx=%2238%22 cy=%2240%22 rx=%2212%22 ry=%227%22 fill=%22white%22 opacity=%220.5%22/></svg>">
 
   <!-- Hand-drawn font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -44,8 +49,8 @@
 <body>
   <canvas id="game"></canvas>
 
-  <!-- Matter.js physics engine -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.20.0/matter.min.js"></script>
+  <!-- Matter.js physics engine (vendored — no CDN dependency, works offline) -->
+  <script src="js/vendor/matter.min.js"></script>
 
   <!-- Game modules -->
   <script type="module" src="js/main.js"></script>

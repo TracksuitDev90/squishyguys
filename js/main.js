@@ -18,8 +18,10 @@ let currentDropTier = 0;
 let nextDropTier = 0;
 let lastDropTime = 0;
 let won = false;
+let isNewBest = false;
 let dangerLevel = 0; // 0-1, how close to game over
 let previouslyUnlocked = new Set([0, 1, 2, 3]);
+let seenBombEffect = null; // last bomb effect we played the suck sound for
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -30,28 +32,24 @@ function setup() {
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
-    const isBombHit = bodyA.isBomb || bodyB.isBomb;
+    const merge = Balls.handleCollision(bodyA, bodyB);
 
-    const points = Balls.handleCollision(bodyA, bodyB);
-
-    // Bomb returns 0 initially (suck-in phase); play suction sound
-    if (isBombHit && Balls.getActiveBombEffect()) {
+    // Bomb starts its suck-in phase asynchronously; play the suction
+    // sound once per bomb effect (contact events can re-fire)
+    const bombEffect = Balls.getActiveBombEffect();
+    if (bombEffect && bombEffect !== seenBombEffect) {
+      seenBombEffect = bombEffect;
       Audio.playBombSuck();
       Particles.triggerShake(4);
       return;
     }
 
-    if (points > 0) {
-      Score.addPoints(points);
-
-      const mergeX = (bodyA.position.x + bodyB.position.x) / 2;
-      const mergeY = (bodyA.position.y + bodyB.position.y) / 2;
-
-      const newTier = findNewTier(bodyA, bodyB);
-      Particles.emitMerge(mergeX, mergeY, newTier, Score.combo);
-      Particles.emitScorePopup(mergeX, mergeY, points, Score.combo);
-      Audio.playMerge(newTier, Score.combo);
-      Input.hapticMerge(newTier);
+    if (merge) {
+      Score.addPoints(merge.points);
+      Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
+      Particles.emitScorePopup(merge.x, merge.y, merge.points, Score.combo);
+      Audio.playMerge(merge.tierIndex, Score.combo);
+      Input.hapticMerge(merge.tierIndex);
 
       checkNewUnlocks();
     }
@@ -80,16 +78,6 @@ function setup() {
   canvas.addEventListener('touchstart', handleUITouch, { passive: false });
 
   requestAnimationFrame(loop);
-}
-
-function findNewTier(bodyA, bodyB) {
-  // After merge, the new tier is one above what was merged
-  // Since the bodies may already be removed, use the last merge effect
-  const effects = Balls.mergeEffects;
-  if (effects.length > 0) {
-    return effects[effects.length - 1].tierIndex;
-  }
-  return 1;
 }
 
 function checkNewUnlocks() {
@@ -143,7 +131,7 @@ function checkUIHit(x, y) {
   if (storeHit) {
     const result = Store.purchase(storeHit, Score.current);
     if (result.success) {
-      Score.current -= result.cost;
+      Score.spend(result.cost);
 
       if (storeHit === 'cupExtend') {
         applyNewCupExtension();
@@ -271,10 +259,11 @@ function loop(timestamp) {
       gameState = 'gameover';
       won = true;
       Score.addPoints(500);
-      Score.saveHighScore();
+      isNewBest = Score.saveHighScore();
       Audio.playWin();
       Input.hapticWin();
       Audio.stopDangerHum();
+      lastDropTime = performance.now();
 
       // Big celebration particles
       const cx = GAME_WIDTH / 2;
@@ -285,10 +274,11 @@ function loop(timestamp) {
     else if (Balls.checkGameOver(getEffectiveDangerY())) {
       gameState = 'gameover';
       won = false;
-      Score.saveHighScore();
+      isNewBest = Score.saveHighScore();
       Audio.playGameOver();
       Input.hapticGameOver();
       Audio.stopDangerHum();
+      lastDropTime = performance.now();
     }
   } else if (gameState === 'gameover') {
     Physics.step(delta);
@@ -316,12 +306,13 @@ function loop(timestamp) {
     balls: Balls.getAll(),
     previewX: Input.state.pointerX,
     previewTier: currentDropTier,
-    nextTier: nextDropTier,
     score: Score.current,
-    highScore: Math.max(Score.bestCombo, Score.getBestCombo()),
+    bestScore: Math.max(Score.getHighScore(), Score.current),
+    bestCombo: Math.max(Score.bestCombo, Score.getBestCombo()),
     combo: Score.combo,
     mergeEffects: Balls.mergeEffects,
     won,
+    isNewBest,
     dangerLevel,
     isDragging: Input.state.isDragging,
     isTouchDevice: Input.getIsTouchDevice(),
@@ -353,10 +344,11 @@ function resetGame() {
   nextDropTier = Balls.getNextDropTier();
   gameState = 'playing';
   won = false;
+  isNewBest = false;
   lastDropTime = performance.now();
   dangerLevel = 0;
   previouslyUnlocked = new Set([0, 1, 2, 3]);
-  Audio.startDangerHum();
+  seenBombEffect = null;
 }
 
 // ── Start ───────────────────────────────────────────────────────
