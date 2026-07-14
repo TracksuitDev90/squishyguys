@@ -14,6 +14,7 @@ const spawnPops = [];
 const unlockFlashes = [];
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
 let dangerPulse = 0; // 0-1, how much danger warning to show
+let feverActive = false; // ambient rising sparkles while frenzying
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -197,8 +198,28 @@ export function setDangerLevel(level) {
   dangerPulse = level;
 }
 
+export function setFeverActive(active) {
+  feverActive = active;
+}
+
 // ── Update ──────────────────────────────────────────────────────
 export function update() {
+  // Fever ambience: golden sparks drifting up from the bottom
+  if (feverActive && Math.random() < 0.3) {
+    sparkles.push({
+      x: 30 + Math.random() * 340,
+      y: 704,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: -(1 + Math.random() * 1.6),
+      size: 1.2 + Math.random() * 1.8,
+      color: Math.random() > 0.3 ? '#FFD700' : '#FFF3C0',
+      life: 1,
+      decay: 0.006 + Math.random() * 0.004,
+      gravity: -0.004, // floats up
+      shape: Math.random() > 0.75 ? 'star' : 'circle',
+    });
+  }
+
   // Sparkles
   for (let i = sparkles.length - 1; i >= 0; i--) {
     const p = sparkles[i];
@@ -424,4 +445,5 @@ export function reset() {
   screenShake.x = 0;
   screenShake.y = 0;
   dangerPulse = 0;
+  feverActive = false;
 }

@@ -67,6 +67,17 @@ export const COIN_WIN_BONUS = 100;
 export const ZEN_COIN_SCALE = 0.5;
 export const ZEN_COIN_CAP = 200;
 
+// Fever system — chained merges fill a meter; at full it triggers a
+// short frenzy window with double points and faster drops. Roughly
+// 8-11 merges with modest combos to fill; decays when idle.
+export const FEVER_FILL_BASE = 0.07;        // meter gain per merge
+export const FEVER_FILL_COMBO_BONUS = 0.02; // extra gain per combo step
+export const FEVER_GRACE_MS = 1500;         // no decay this long after a merge
+export const FEVER_DECAY_PER_SEC = 0.06;    // ~17s to fully drain from full
+export const FEVER_DURATION_MS = 9000;      // frenzy window length
+export const FEVER_SCORE_MULT = 2;          // point multiplier while active
+export const FEVER_COOLDOWN_SCALE = 0.5;    // drop cooldown scale while active
+
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
 // Higher tiers drop less frequently.
 export const DROP_WEIGHTS = [46, 28, 15, 8, 3];

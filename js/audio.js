@@ -4,6 +4,9 @@
 let audioCtx = null;
 let masterGain = null;
 let muted = false;
+// Fever raises the whole soundscape's pitch a bit — everything feels
+// faster and brighter without new samples
+let pitchMult = 1;
 
 // Note frequencies for merge sounds (descending — bigger balls = deeper pitch)
 const MERGE_NOTES = [
@@ -60,8 +63,8 @@ export function playDrop(tierIndex) {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime(220 - tierIndex * 18, now);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(30, 60 - tierIndex * 4), now + 0.1);
+  osc.frequency.setValueAtTime((220 - tierIndex * 18) * pitchMult, now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(30, 60 - tierIndex * 4) * pitchMult, now + 0.1);
   gain.gain.setValueAtTime(0.2 + tierIndex * 0.02, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15 + tierIndex * 0.02);
   osc.connect(gain);
@@ -89,7 +92,7 @@ export function playMerge(tierIndex, comboCount) {
   if (!ctx) return;
 
   const now = ctx.currentTime;
-  const baseFreq = MERGE_NOTES[Math.min(tierIndex, MERGE_NOTES.length - 1)];
+  const baseFreq = MERGE_NOTES[Math.min(tierIndex, MERGE_NOTES.length - 1)] * pitchMult;
 
   // Main chime tone
   const osc1 = ctx.createOscillator();
@@ -283,6 +286,72 @@ export function playWin() {
     osc2.start(now + delay + 0.05);
     osc2.stop(now + delay + 0.55);
   });
+}
+
+// ── Fever ───────────────────────────────────────────────────────
+export function setFeverActive(active) {
+  pitchMult = active ? 1.12 : 1;
+}
+
+// Rising four-note arpeggio when the fever meter tops out
+export function playFeverStart() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const notes = [392, 493.88, 587.33, 783.99]; // G4 B4 D5 G5
+  notes.forEach((freq, i) => {
+    const delay = i * 0.09;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, now + delay);
+    g.gain.setValueAtTime(0.22, now + delay);
+    g.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.35);
+    osc.connect(g);
+    g.connect(masterGain);
+    osc.start(now + delay);
+    osc.stop(now + delay + 0.4);
+  });
+}
+
+// Soft two-note settle when the frenzy window closes
+export function playFeverEnd() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  [587.33, 392].forEach((freq, i) => {
+    const delay = i * 0.16;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, now + delay);
+    g.gain.setValueAtTime(0.15, now + delay);
+    g.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.4);
+    osc.connect(g);
+    g.connect(masterGain);
+    osc.start(now + delay);
+    osc.stop(now + delay + 0.45);
+  });
+}
+
+// Tiny blip for the coin count-up ceremony
+export function playCoinTick() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(1180 + Math.random() * 120, now);
+  g.gain.setValueAtTime(0.06, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+  osc.connect(g);
+  g.connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.06);
 }
 
 // ── Danger warning: low pulsing hum ─────────────────────────────

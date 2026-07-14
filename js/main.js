@@ -16,6 +16,7 @@ import * as Store from './store.js';
 import * as Save from './save.js';
 import * as Menus from './menus.js';
 import * as Skins from './skins.js';
+import * as Fever from './fever.js';
 
 // ── State ───────────────────────────────────────────────────────
 let gameState = 'menu'; // 'menu' | 'shop' | 'playing' | 'gameover'
@@ -56,9 +57,11 @@ function setup() {
     }
 
     if (merge) {
-      Score.addPoints(merge.points);
+      const points = merge.points * Fever.getMultiplier();
+      Score.addPoints(points);
+      Fever.onMerge(Score.combo);
       Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
-      Particles.emitScorePopup(merge.x, merge.y, merge.points, Score.combo);
+      Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
       Audio.playMerge(merge.tierIndex, Score.combo);
       Input.hapticMerge(merge.tierIndex);
 
@@ -321,7 +324,7 @@ function loop(timestamp) {
           activeGhost.body.position.y,
           activeGhost.tierIndex
         );
-      } else if (now - lastDropTime >= DROP_COOLDOWN_MS) {
+      } else if (now - lastDropTime >= DROP_COOLDOWN_MS * Fever.getCooldownScale()) {
         if (Store.isBombQueued()) {
           // Drop a bomb ball instead of normal
           Balls.spawnBombBall(Input.state.pointerX);
@@ -355,13 +358,30 @@ function loop(timestamp) {
     // Update bomb suck-in effect
     const bombResult = Balls.updateBombEffect();
     if (bombResult && bombResult.points > 0) {
-      Score.addPoints(bombResult.points);
+      const points = bombResult.points * Fever.getMultiplier();
+      Score.addPoints(points);
+      Fever.onMerge(Score.combo);
       Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
-      Particles.emitScorePopup(bombResult.x, bombResult.y, bombResult.points, Score.combo);
+      Particles.emitScorePopup(bombResult.x, bombResult.y, points, Score.combo);
       Audio.playMerge(bombResult.tier, 3);
       Input.hapticMerge(8);
       Particles.triggerShake(12);
       checkNewUnlocks();
+    }
+
+    // Fever meter tick + start/end transitions
+    const feverEvents = Fever.update(delta);
+    if (feverEvents.started) {
+      Audio.playFeverStart();
+      Audio.setFeverActive(true);
+      Particles.setFeverActive(true);
+      Particles.triggerShake(10);
+      Input.hapticWin();
+    }
+    if (feverEvents.ended) {
+      Audio.playFeverEnd();
+      Audio.setFeverActive(false);
+      Particles.setFeverActive(false);
     }
 
     // Update danger (zen relieves overflow instead of ending the run)
@@ -405,6 +425,7 @@ function loop(timestamp) {
     }
   } else if (gameState === 'gameover') {
     Physics.step(delta);
+    updateCoinTicks();
 
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
@@ -428,6 +449,7 @@ function loop(timestamp) {
   Renderer.render({
     gameState,
     mode: currentMode,
+    fever: { meter: Fever.getMeter(), active: Fever.isActive() },
     rushTimeLeftMs,
     dangerEnabled: MODES[currentMode].danger,
     balls: Balls.getAll(),
@@ -465,6 +487,21 @@ function loop(timestamp) {
   });
 }
 
+// Little blips while the coin ceremony counts up. Mirrors the count
+// the renderer derives from gameoverAt so sight and sound stay in sync.
+let lastTickedCoins = 0;
+
+function updateCoinTicks() {
+  if (coinsEarned <= 0) return;
+  const t = Math.min((performance.now() - gameoverAt) / 1200, 1);
+  const shown = Math.floor(coinsEarned * (1 - Math.pow(1 - t, 3)));
+  if (shown > lastTickedCoins) {
+    Audio.playCoinTick();
+    lastTickedCoins = shown;
+    if (t >= 1) Particles.triggerShake(3);
+  }
+}
+
 // Centralized end-of-run: high score, coin payout, audio/haptics.
 // Coins are banked immediately — the count-up on the gameover screen
 // is purely visual, so a refresh mid-ceremony never loses them.
@@ -475,6 +512,9 @@ function endRun(wonRun, reason) {
   isNewBest = Score.saveHighScore(currentMode);
   coinsEarned = computeCoins(wonRun, currentMode);
   Save.addCoins(coinsEarned);
+  lastTickedCoins = 0;
+  Audio.setFeverActive(false);
+  Particles.setFeverActive(false);
   if (wonRun) {
     Audio.playWin();
     Input.hapticWin();
@@ -492,6 +532,8 @@ function startGame(modeId) {
   Score.reset();
   Particles.reset();
   Store.reset();
+  Fever.reset();
+  Audio.setFeverActive(false);
   Physics.resetCup();
 
   // Apply permanent upgrades bought in the unlock shop

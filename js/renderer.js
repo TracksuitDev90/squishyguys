@@ -26,6 +26,7 @@ const ballSquish = new Map();
 let bgGradient = null;
 let spotlightGradient = null;
 let vignetteGradient = null;
+let feverGlowGradient = null;
 
 // Ambient floating dust motes for atmosphere
 const dustMotes = [];
@@ -85,6 +86,15 @@ function buildStaticGradients() {
   );
   vignetteGradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
   vignetteGradient.addColorStop(1, 'rgba(2, 2, 12, 0.42)');
+
+  // Warm glow washed over everything during fever frenzy (alpha is
+  // animated at draw time, the gradient itself is static)
+  const fcx = (CUP_LEFT_X + CUP_RIGHT_X) / 2;
+  const fcy = (CUP_TOP_Y + CUP_BOTTOM_Y) / 2;
+  feverGlowGradient = ctx.createRadialGradient(fcx, fcy, 60, fcx, fcy, 420);
+  feverGlowGradient.addColorStop(0, 'rgba(255, 190, 60, 0.16)');
+  feverGlowGradient.addColorStop(0.55, 'rgba(255, 140, 40, 0.08)');
+  feverGlowGradient.addColorStop(1, 'rgba(255, 90, 20, 0)');
 }
 
 function handleResize() {
@@ -138,6 +148,7 @@ export function render(state) {
 
   const cupExt = state.cupExtendPx || 0;
 
+  if (state.fever && state.fever.active) drawFeverOverlay();
   if (state.dangerEnabled) drawDangerZone(state.dangerLevel, cupExt);
   drawCup(cupExt);
   if (state.dangerEnabled) drawDangerLine(state.dangerLevel, cupExt);
@@ -157,6 +168,7 @@ export function render(state) {
 
   drawScore(state.score, state.bestScore, state.combo);
   drawModeStatus(state);
+  if (state.fever) drawFeverMeter(state.fever, cupExt);
   drawMuteButton(state.muted);
 
   if (state.gameState === 'playing') {
@@ -1273,6 +1285,83 @@ function drawScore(score, bestScore, combo) {
     ctx.restore();
   }
 
+  ctx.restore();
+}
+
+// ── Fever Meter & Overlay ───────────────────────────────────────
+// Vertical meter along the left edge of the cup: fills gold as merges
+// chain, drains as the countdown while frenzy is active.
+function drawFeverMeter(fever, cupExt) {
+  if (fever.meter <= 0 && !fever.active) return;
+
+  const barX = 26;
+  const barW = 9;
+  const barBottom = 640;
+  const barTop = 390 - (cupExt || 0);
+  const barH = barBottom - barTop;
+  const t = performance.now();
+
+  ctx.save();
+
+  // Track
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(barX, barTop, barW, barH, 5);
+  ctx.fill();
+  ctx.stroke();
+
+  // Fill (bottom-up)
+  const fillH = barH * Math.min(fever.meter, 1);
+  if (fillH > 1) {
+    const nearFull = fever.meter > 0.8 || fever.active;
+    const pulse = nearFull ? 0.75 + Math.sin(t * 0.012) * 0.25 : 0.85;
+    const grad = ctx.createLinearGradient(0, barBottom - fillH, 0, barBottom);
+    grad.addColorStop(0, fever.active ? '#FFE066' : '#FFD700');
+    grad.addColorStop(1, fever.active ? '#FF8C42' : '#E8A317');
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(barX + 1, barBottom - fillH, barW - 2, fillH, 4);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Label + burst text while active
+  if (fever.active) {
+    const wob = Math.sin(t * 0.02) * 0.12;
+    ctx.save();
+    ctx.translate(barX + barW / 2, barTop - 16);
+    ctx.rotate(wob);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px "Patrick Hand", cursive';
+    ctx.fillStyle = `rgba(255, 215, 0, ${0.7 + Math.sin(t * 0.015) * 0.3})`;
+    ctx.fillText('2x', 0, 0);
+    ctx.restore();
+  } else {
+    ctx.textAlign = 'center';
+    ctx.font = '10px "Patrick Hand", cursive';
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.35)';
+    ctx.fillText('FEVER', barX + barW / 2, barTop - 8);
+  }
+
+  ctx.restore();
+}
+
+// Warm pulsing wash over the scene while frenzy is running
+function drawFeverOverlay() {
+  const pulse = 0.75 + Math.sin(performance.now() * 0.006) * 0.25;
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = feverGlowGradient;
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+  // Thin golden border glow
+  ctx.globalAlpha = 0.35 * pulse;
+  ctx.strokeStyle = '#FFC93C';
+  ctx.lineWidth = 5;
+  ctx.strokeRect(2, 2, GAME_WIDTH - 4, GAME_HEIGHT - 4);
   ctx.restore();
 }
 
