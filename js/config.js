@@ -40,6 +40,16 @@ export const BALL_TIERS = [
   { name: 'rainbow',    radius: 79, color: 'rainbow', stroke: '#888888', points: 100 },
 ];
 
+// Coin economy — persistent currency earned at the end of every run:
+// floor(score / COIN_SCORE_DIVISOR) + floor(merges / COIN_MERGE_DIVISOR)
+// (+ win bonus). Zen runs are unbounded, so they earn at half rate
+// with a hard cap to keep them from being the optimal coin farm.
+export const COIN_SCORE_DIVISOR = 25;
+export const COIN_MERGE_DIVISOR = 2;
+export const COIN_WIN_BONUS = 100;
+export const ZEN_COIN_SCALE = 0.5;
+export const ZEN_COIN_CAP = 200;
+
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
 // Higher tiers drop less frequently.
 export const DROP_WEIGHTS = [46, 28, 15, 8, 3];

@@ -23,7 +23,8 @@ function ensureContext() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.3;
+    // The context is created lazily, so honor a mute set before first sound
+    masterGain.gain.value = muted ? 0 : 0.3;
     masterGain.connect(audioCtx.destination);
   }
   if (audioCtx.state === 'suspended') {
@@ -32,11 +33,15 @@ function ensureContext() {
   return audioCtx;
 }
 
-export function toggleMute() {
-  muted = !muted;
+export function setMuted(value) {
+  muted = !!value;
   if (masterGain) {
     masterGain.gain.value = muted ? 0 : 0.3;
   }
+}
+
+export function toggleMute() {
+  setMuted(!muted);
   return muted;
 }
 

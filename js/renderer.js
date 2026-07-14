@@ -138,7 +138,7 @@ export function render(state) {
   }
 
   if (state.gameState === 'gameover') {
-    drawGameOver(state.score, state.bestScore, state.bestCombo, state.won, state.isNewBest);
+    drawGameOver(state);
   }
 
   ctx.restore();
@@ -1266,7 +1266,8 @@ function drawMuteButton(muted) {
 }
 
 // ── Game Over Overlay ───────────────────────────────────────────
-function drawGameOver(score, bestScore, bestCombo, won, isNewBest) {
+function drawGameOver(state) {
+  const { score, bestScore, bestCombo, won, isNewBest } = state;
   ctx.save();
 
   // Animated dim overlay
@@ -1321,13 +1322,61 @@ function drawGameOver(score, bestScore, bestCombo, won, isNewBest) {
     ctx.fillText(`Best Combo: ${bestCombo.toLocaleString()}`, cx, cy + 62);
   }
 
+  // Coin payout ceremony: count up over 1.2s, then rest
+  if (state.coinsEarned > 0) {
+    const t = Math.min((performance.now() - state.gameoverAt) / 1200, 1);
+    const shown = Math.floor(state.coinsEarned * easeOutCubicLocal(t));
+    const settled = t >= 1;
+
+    drawCoinIcon(cx - 12 - String(shown).length * 5, cy + 96, 9);
+    ctx.font = 'bold 22px "Patrick Hand", cursive';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = settled ? '#FFD700' : '#FFE9A0';
+    ctx.fillText(`+${shown.toLocaleString()}`, cx - 12 - String(shown).length * 5 + 16, cy + 103);
+
+    // Running bank total, small below
+    ctx.font = '14px "Patrick Hand", cursive';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.5)';
+    ctx.fillText(`bank: ${(state.coinBalance || 0).toLocaleString()}`, cx, cy + 126);
+  }
+
   // Restart prompt with pulse
   const promptAlpha = 0.4 + Math.sin(performance.now() * 0.004) * 0.2;
   ctx.font = '18px "Patrick Hand", cursive';
+  ctx.textAlign = 'center';
   ctx.fillStyle = `rgba(255,255,255,${promptAlpha})`;
-  ctx.fillText('Tap to play again', cx, cy + 105);
+  ctx.fillText('Tap to play again', cx, cy + 160);
 
   ctx.restore();
+}
+
+// Small hand-drawn coin used in payout displays
+function drawCoinIcon(x, y, r) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#F1C40F';
+  ctx.strokeStyle = '#B7950B';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(183, 149, 11, 0.7)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2);
+  ctx.stroke();
+  // Little glint
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.arc(-r * 0.3, -r * 0.35, r * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function easeOutCubicLocal(t) {
+  return 1 - Math.pow(1 - t, 3);
 }
 
 // ── Store Buttons ───────────────────────────────────────────────

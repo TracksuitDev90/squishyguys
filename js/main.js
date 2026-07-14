@@ -2,6 +2,8 @@
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
   BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS,
+  COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
+  ZEN_COIN_SCALE, ZEN_COIN_CAP,
 } from './config.js';
 import * as Physics from './physics.js';
 import * as Balls from './balls.js';
@@ -11,6 +13,7 @@ import * as Score from './score.js';
 import * as Particles from './particles.js';
 import * as Audio from './audio.js';
 import * as Store from './store.js';
+import * as Save from './save.js';
 
 // ── State ───────────────────────────────────────────────────────
 let gameState = 'playing'; // 'playing' | 'gameover'
@@ -22,6 +25,8 @@ let isNewBest = false;
 let dangerLevel = 0; // 0-1, how close to game over
 let previouslyUnlocked = new Set([0, 1, 2, 3]);
 let seenBombEffect = null; // last bomb effect we played the suck sound for
+let coinsEarned = 0; // coins awarded for the run that just ended
+let gameoverAt = 0; // drives restart guard + coin count-up ceremony
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -29,6 +34,7 @@ function setup() {
   Physics.init();
   Renderer.init(canvas);
   Input.init(canvas, GAME_WIDTH, GAME_HEIGHT);
+  Audio.setMuted(Save.getMuted());
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
@@ -119,7 +125,7 @@ function checkUIHit(x, y) {
   const btn = Renderer.MUTE_BTN;
   const dist = Math.sqrt((x - btn.x) ** 2 + (y - btn.y) ** 2);
   if (dist < btn.size) {
-    Audio.toggleMute();
+    Save.setMuted(Audio.toggleMute());
     Input.state.uiConsumed = true;
     return true;
   }
@@ -144,6 +150,17 @@ function checkUIHit(x, y) {
     }
   }
   return false;
+}
+
+// ── Coin Payout ─────────────────────────────────────────────────
+function computeCoins(wonRun, mode) {
+  let coins = Math.floor(Score.current / COIN_SCORE_DIVISOR)
+            + Math.floor(Score.mergeCount / COIN_MERGE_DIVISOR)
+            + (wonRun ? COIN_WIN_BONUS : 0);
+  if (mode === 'zen') {
+    coins = Math.min(Math.floor(coins * ZEN_COIN_SCALE), ZEN_COIN_CAP);
+  }
+  return coins;
 }
 
 // ── Cup Extension ───────────────────────────────────────────────
@@ -256,14 +273,8 @@ function loop(timestamp) {
 
     // Check win
     if (Balls.hasRainbow()) {
-      gameState = 'gameover';
-      won = true;
       Score.addPoints(500);
-      isNewBest = Score.saveHighScore();
-      Audio.playWin();
-      Input.hapticWin();
-      Audio.stopDangerHum();
-      lastDropTime = performance.now();
+      endRun(true);
 
       // Big celebration particles
       const cx = GAME_WIDTH / 2;
@@ -272,13 +283,7 @@ function loop(timestamp) {
     }
     // Check game over
     else if (Balls.checkGameOver(getEffectiveDangerY())) {
-      gameState = 'gameover';
-      won = false;
-      isNewBest = Score.saveHighScore();
-      Audio.playGameOver();
-      Input.hapticGameOver();
-      Audio.stopDangerHum();
-      lastDropTime = performance.now();
+      endRun(false);
     }
   } else if (gameState === 'gameover') {
     Physics.step(delta);
@@ -286,7 +291,7 @@ function loop(timestamp) {
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
       // Small delay to avoid accidental restart
-      if (performance.now() - lastDropTime > 800) {
+      if (performance.now() - gameoverAt > 800) {
         resetGame();
       }
     }
@@ -313,6 +318,9 @@ function loop(timestamp) {
     mergeEffects: Balls.mergeEffects,
     won,
     isNewBest,
+    coinsEarned,
+    gameoverAt,
+    coinBalance: Save.getCoins(),
     dangerLevel,
     isDragging: Input.state.isDragging,
     isTouchDevice: Input.getIsTouchDevice(),
@@ -334,6 +342,26 @@ function loop(timestamp) {
   });
 }
 
+// Centralized end-of-run: high score, coin payout, audio/haptics.
+// Coins are banked immediately — the count-up on the gameover screen
+// is purely visual, so a refresh mid-ceremony never loses them.
+function endRun(wonRun) {
+  gameState = 'gameover';
+  won = wonRun;
+  isNewBest = Score.saveHighScore('classic');
+  coinsEarned = computeCoins(wonRun, 'classic');
+  Save.addCoins(coinsEarned);
+  if (wonRun) {
+    Audio.playWin();
+    Input.hapticWin();
+  } else {
+    Audio.playGameOver();
+    Input.hapticGameOver();
+  }
+  Audio.stopDangerHum();
+  gameoverAt = performance.now();
+}
+
 function resetGame() {
   Balls.reset();
   Score.reset();
@@ -349,6 +377,7 @@ function resetGame() {
   dangerLevel = 0;
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
+  coinsEarned = 0;
 }
 
 // ── Start ───────────────────────────────────────────────────────
