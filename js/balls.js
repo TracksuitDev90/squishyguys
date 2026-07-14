@@ -334,8 +334,11 @@ function performMerge(bodies, tierIndex) {
 }
 
 // ── Game Over Check ─────────────────────────────────────────────
-// dangerY can be passed in to account for cup extensions
-export function checkGameOver(dangerY) {
+// Scans for a ball that has lingered above the danger line too long,
+// updating per-ball timers as it goes. Returns the offending entry
+// (or null). Classic/rush end the run on it; zen pops it instead.
+// dangerY can be passed in to account for cup extensions.
+export function findExpiredDangerBall(dangerY) {
   const effectiveDangerY = dangerY != null ? dangerY : DANGER_LINE_Y;
   const now = performance.now();
   for (const [, entry] of activeBalls) {
@@ -352,13 +355,42 @@ export function checkGameOver(dangerY) {
       if (!body.aboveDangerSince) {
         body.aboveDangerSince = now;
       } else if (now - body.aboveDangerSince > DANGER_DURATION_MS) {
-        return true;
+        return entry;
       }
     } else {
       body.aboveDangerSince = null;
     }
   }
-  return false;
+  return null;
+}
+
+export function checkGameOver(dangerY) {
+  return !!findExpiredDangerBall(dangerY);
+}
+
+// Remove a ball from play (zen overflow relief, rainbow consume).
+// Returns its last position and tier for effects/points.
+export function popBall(id) {
+  const entry = activeBalls.get(id);
+  if (!entry) return null;
+  activeBalls.delete(id);
+  Physics.removeBody(entry.body);
+  if (activeGhostBall && activeGhostBall.id === id) activeGhostBall = null;
+  return {
+    x: entry.body.position.x,
+    y: entry.body.position.y,
+    tierIndex: entry.tierIndex,
+  };
+}
+
+// Zen mode: the rainbow celebrates and leaves so play can continue.
+export function consumeRainbow() {
+  for (const [id, entry] of activeBalls) {
+    if (entry.tierIndex === BALL_TIERS.length - 1) {
+      return popBall(id);
+    }
+  }
+  return null;
 }
 
 // ── Rainbow Check ───────────────────────────────────────────────

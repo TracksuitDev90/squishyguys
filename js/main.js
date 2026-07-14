@@ -1,7 +1,9 @@
 // ── Squishy Guys — Main Game Loop ───────────────────────────────
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
-  BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS,
+  BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
+  COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
+  ZEN_COIN_SCALE, ZEN_COIN_CAP,
 } from './config.js';
 import * as Physics from './physics.js';
 import * as Balls from './balls.js';
@@ -11,9 +13,14 @@ import * as Score from './score.js';
 import * as Particles from './particles.js';
 import * as Audio from './audio.js';
 import * as Store from './store.js';
+import * as Save from './save.js';
+import * as Menus from './menus.js';
+import * as Skins from './skins.js';
+import * as Fever from './fever.js';
 
 // ── State ───────────────────────────────────────────────────────
-let gameState = 'playing'; // 'playing' | 'gameover'
+let gameState = 'menu'; // 'menu' | 'shop' | 'playing' | 'gameover'
+let currentMode = 'classic'; // 'classic' | 'rush' | 'zen'
 let currentDropTier = 0;
 let nextDropTier = 0;
 let lastDropTime = 0;
@@ -22,6 +29,10 @@ let isNewBest = false;
 let dangerLevel = 0; // 0-1, how close to game over
 let previouslyUnlocked = new Set([0, 1, 2, 3]);
 let seenBombEffect = null; // last bomb effect we played the suck sound for
+let coinsEarned = 0; // coins awarded for the run that just ended
+let gameoverAt = 0; // drives restart guard + coin count-up ceremony
+let gameoverReason = 'danger'; // 'danger' | 'time' | 'rainbow'
+let rushTimeLeftMs = 0;
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -29,6 +40,7 @@ function setup() {
   Physics.init();
   Renderer.init(canvas);
   Input.init(canvas, GAME_WIDTH, GAME_HEIGHT);
+  Audio.setMuted(Save.getMuted());
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
@@ -45,9 +57,11 @@ function setup() {
     }
 
     if (merge) {
-      Score.addPoints(merge.points);
+      const points = merge.points * Fever.getMultiplier();
+      Score.addPoints(points);
+      Fever.onMerge(Score.combo);
       Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
-      Particles.emitScorePopup(merge.x, merge.y, merge.points, Score.combo);
+      Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
       Audio.playMerge(merge.tierIndex, Score.combo);
       Input.hapticMerge(merge.tierIndex);
 
@@ -73,7 +87,7 @@ function setup() {
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
 
-  // Handle mute button and store clicks
+  // Handle mute button, menu, and store clicks
   canvas.addEventListener('mousedown', handleUIClick);
   canvas.addEventListener('touchstart', handleUITouch, { passive: false });
 
@@ -90,7 +104,7 @@ function checkNewUnlocks() {
   }
 }
 
-// ── UI Click Handling (Mute + Store) ────────────────────────────
+// ── UI Click Handling (per-state dispatch) ──────────────────────
 function handleUIClick(e) {
   const rect = e.target.getBoundingClientRect();
   const scaleX = GAME_WIDTH / rect.width;
@@ -115,35 +129,116 @@ function handleUITouch(e) {
 }
 
 function checkUIHit(x, y) {
-  // Mute button
+  // Mute button — active in every state
   const btn = Renderer.MUTE_BTN;
   const dist = Math.sqrt((x - btn.x) ** 2 + (y - btn.y) ** 2);
   if (dist < btn.size) {
-    Audio.toggleMute();
+    Save.setMuted(Audio.toggleMute());
     Input.state.uiConsumed = true;
     return true;
   }
 
-  if (gameState !== 'playing') return false;
-
-  // Store buttons
-  const storeHit = Renderer.checkStoreButtonHit(x, y);
-  if (storeHit) {
-    const result = Store.purchase(storeHit, Score.current);
-    if (result.success) {
-      Score.spend(result.cost);
-
-      if (storeHit === 'cupExtend') {
-        applyNewCupExtension();
+  switch (gameState) {
+    case 'menu': {
+      const hit = Menus.checkMenuHit(x, y);
+      if (hit === 'shop') {
+        Audio.playDrop(2);
+        gameState = 'shop';
+      } else if (hit && MODES[hit]) {
+        Audio.playMerge(3, 1);
+        startGame(hit);
       }
-      // colorBomb just queues the bomb for next drop (handled in drop logic)
-
-      Audio.playMerge(5, 1); // satisfying purchase sound
+      // Consume every tap in the menu so a stray press can never
+      // leak a dropRequested into the first playing frame
       Input.state.uiConsumed = true;
       return true;
     }
+
+    case 'shop': {
+      const hit = Menus.checkShopHit(x, y);
+      if (hit) handleShopAction(hit);
+      Input.state.uiConsumed = true;
+      return true;
+    }
+
+    case 'gameover': {
+      const hit = Menus.checkGameOverHit(x, y);
+      if (hit && performance.now() - gameoverAt > 800) {
+        if (hit === 'again') {
+          Audio.playMerge(3, 1);
+          startGame(currentMode);
+        } else {
+          Audio.playDrop(2);
+          returnToMenu();
+        }
+        Input.state.uiConsumed = true;
+        return true;
+      }
+      // Taps elsewhere fall through to the tap-anywhere restart
+      return false;
+    }
+
+    case 'playing': {
+      const storeHit = Renderer.checkStoreButtonHit(x, y);
+      if (storeHit) {
+        const result = Store.purchase(storeHit, Score.current);
+        if (result.success) {
+          Score.spend(result.cost);
+
+          if (storeHit === 'cupExtend') {
+            applyNewCupExtension();
+          }
+          // colorBomb just queues the bomb for next drop (handled in drop logic)
+
+          Audio.playMerge(5, 1); // satisfying purchase sound
+          Input.state.uiConsumed = true;
+          return true;
+        }
+      }
+      return false;
+    }
   }
   return false;
+}
+
+function handleShopAction(hit) {
+  if (hit.type === 'back') {
+    Audio.playDrop(2);
+    gameState = 'menu';
+    return;
+  }
+
+  if (hit.type === 'skin') {
+    if (Save.isSkinUnlocked(hit.id)) {
+      if (Skins.selectSkin(hit.id)) {
+        Renderer.applyTheme();
+        Audio.playDrop(3);
+      }
+    } else if (Skins.purchaseSkin(hit.id)) {
+      Renderer.applyTheme();
+      Audio.playMerge(5, 2); // cha-ching
+      Particles.triggerShake(4);
+    }
+    return;
+  }
+
+  if (hit.type === 'upgrade') {
+    if (Skins.purchaseUpgrade(hit.id)) {
+      Audio.playMerge(5, 2);
+      Particles.triggerShake(4);
+    }
+  }
+}
+
+// ── Coin Payout ─────────────────────────────────────────────────
+function computeCoins(wonRun, mode) {
+  let coins = Math.floor(Score.current / COIN_SCORE_DIVISOR)
+            + Math.floor(Score.mergeCount / COIN_MERGE_DIVISOR)
+            + (wonRun ? COIN_WIN_BONUS : 0);
+  if (mode === 'zen') {
+    coins = Math.min(Math.floor(coins * ZEN_COIN_SCALE), ZEN_COIN_CAP);
+  }
+  return coins;
 }
 
 // ── Cup Extension ───────────────────────────────────────────────
@@ -183,6 +278,21 @@ function updateDangerLevel() {
   Audio.updateDangerHum(dangerLevel);
 }
 
+// Zen has no game over: a ball that lingers above the line gently
+// pops instead, banking its points and making room in the cup.
+function zenOverflowRelief() {
+  const expired = Balls.findExpiredDangerBall(getEffectiveDangerY());
+  if (!expired) return;
+  const popped = Balls.popBall(expired.body.id);
+  if (!popped || popped.tierIndex < 0) return;
+
+  const points = BALL_TIERS[popped.tierIndex].points;
+  Score.addPoints(points);
+  Particles.emitMerge(popped.x, popped.y, popped.tierIndex, 1);
+  Particles.emitScorePopup(popped.x, popped.y, points, 1);
+  Audio.playDrop(popped.tierIndex);
+}
+
 // ── Game Loop ───────────────────────────────────────────────────
 let lastTime = 0;
 
@@ -192,7 +302,13 @@ function loop(timestamp) {
   const delta = lastTime ? Math.min(timestamp - lastTime, 32) : 16.67;
   lastTime = timestamp;
 
-  if (gameState === 'playing') {
+  if (gameState === 'menu' || gameState === 'shop') {
+    // Belt and suspenders with checkUIHit's consume-everything: no
+    // tap on a menu screen may ever become a ball drop
+    Input.state.dropRequested = false;
+  } else if (gameState === 'playing') {
+    const modeCfg = MODES[currentMode];
+
     // Handle drop / ghost activation
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
@@ -208,7 +324,7 @@ function loop(timestamp) {
           activeGhost.body.position.y,
           activeGhost.tierIndex
         );
-      } else if (now - lastDropTime >= DROP_COOLDOWN_MS) {
+      } else if (now - lastDropTime >= DROP_COOLDOWN_MS * Fever.getCooldownScale()) {
         if (Store.isBombQueued()) {
           // Drop a bomb ball instead of normal
           Balls.spawnBombBall(Input.state.pointerX);
@@ -242,52 +358,81 @@ function loop(timestamp) {
     // Update bomb suck-in effect
     const bombResult = Balls.updateBombEffect();
     if (bombResult && bombResult.points > 0) {
-      Score.addPoints(bombResult.points);
+      const points = bombResult.points * Fever.getMultiplier();
+      Score.addPoints(points);
+      Fever.onMerge(Score.combo);
       Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
-      Particles.emitScorePopup(bombResult.x, bombResult.y, bombResult.points, Score.combo);
+      Particles.emitScorePopup(bombResult.x, bombResult.y, points, Score.combo);
       Audio.playMerge(bombResult.tier, 3);
       Input.hapticMerge(8);
       Particles.triggerShake(12);
       checkNewUnlocks();
     }
 
-    // Update danger
-    updateDangerLevel();
-
-    // Check win
-    if (Balls.hasRainbow()) {
-      gameState = 'gameover';
-      won = true;
-      Score.addPoints(500);
-      isNewBest = Score.saveHighScore();
-      Audio.playWin();
+    // Fever meter tick + start/end transitions
+    const feverEvents = Fever.update(delta);
+    if (feverEvents.started) {
+      Audio.playFeverStart();
+      Audio.setFeverActive(true);
+      Particles.setFeverActive(true);
+      Particles.triggerShake(10);
       Input.hapticWin();
-      Audio.stopDangerHum();
-      lastDropTime = performance.now();
-
-      // Big celebration particles
-      const cx = GAME_WIDTH / 2;
-      const cy = GAME_HEIGHT / 2;
-      Particles.emitMerge(cx, cy, 9, 5);
     }
-    // Check game over
-    else if (Balls.checkGameOver(getEffectiveDangerY())) {
-      gameState = 'gameover';
-      won = false;
-      isNewBest = Score.saveHighScore();
-      Audio.playGameOver();
-      Input.hapticGameOver();
-      Audio.stopDangerHum();
-      lastDropTime = performance.now();
+    if (feverEvents.ended) {
+      Audio.playFeverEnd();
+      Audio.setFeverActive(false);
+      Particles.setFeverActive(false);
+    }
+
+    // Update danger (zen relieves overflow instead of ending the run)
+    if (modeCfg.danger) {
+      updateDangerLevel();
+    } else {
+      dangerLevel = 0;
+      Particles.setDangerLevel(0);
+      zenOverflowRelief();
+    }
+
+    // Rush: count down with the frame delta — rAF pauses in background
+    // tabs so the clock pauses too (never diff wall-clock here)
+    if (modeCfg.timeLimitMs) {
+      rushTimeLeftMs = Math.max(0, rushTimeLeftMs - delta);
+    }
+
+    // End-of-run checks
+    if (Balls.hasRainbow()) {
+      if (currentMode === 'zen') {
+        // Zen: celebrate the rainbow, then it floats away and play continues
+        const rb = Balls.consumeRainbow();
+        if (rb) {
+          Score.addPoints(500);
+          Particles.emitMerge(rb.x, rb.y, 9, 5);
+          Particles.emitScorePopup(rb.x, rb.y, 500, 1);
+          Audio.playWin();
+          Input.hapticWin();
+        }
+      } else {
+        Score.addPoints(500);
+        endRun(true, 'rainbow');
+
+        // Big celebration particles
+        Particles.emitMerge(GAME_WIDTH / 2, GAME_HEIGHT / 2, 9, 5);
+      }
+    } else if (modeCfg.danger && Balls.checkGameOver(getEffectiveDangerY())) {
+      endRun(false, 'danger');
+    } else if (modeCfg.timeLimitMs && rushTimeLeftMs <= 0) {
+      endRun(false, 'time');
     }
   } else if (gameState === 'gameover') {
     Physics.step(delta);
+    updateCoinTicks();
 
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
-      // Small delay to avoid accidental restart
-      if (performance.now() - lastDropTime > 800) {
-        resetGame();
+      // Tap anywhere (outside the buttons) replays the same mode.
+      // Small delay to avoid accidental restart.
+      if (performance.now() - gameoverAt > 800) {
+        startGame(currentMode);
       }
     }
   }
@@ -303,16 +448,24 @@ function loop(timestamp) {
   // Render
   Renderer.render({
     gameState,
+    mode: currentMode,
+    fever: { meter: Fever.getMeter(), active: Fever.isActive() },
+    rushTimeLeftMs,
+    dangerEnabled: MODES[currentMode].danger,
     balls: Balls.getAll(),
     previewX: Input.state.pointerX,
     previewTier: currentDropTier,
     score: Score.current,
-    bestScore: Math.max(Score.getHighScore(), Score.current),
+    bestScore: Math.max(Score.getHighScore(currentMode), Score.current),
     bestCombo: Math.max(Score.bestCombo, Score.getBestCombo()),
     combo: Score.combo,
     mergeEffects: Balls.mergeEffects,
     won,
     isNewBest,
+    gameoverReason,
+    coinsEarned,
+    gameoverAt,
+    coinBalance: Save.getCoins(),
     dangerLevel,
     isDragging: Input.state.isDragging,
     isTouchDevice: Input.getIsTouchDevice(),
@@ -334,14 +487,67 @@ function loop(timestamp) {
   });
 }
 
-function resetGame() {
+// Little blips while the coin ceremony counts up. Mirrors the count
+// the renderer derives from gameoverAt so sight and sound stay in sync.
+let lastTickedCoins = 0;
+
+function updateCoinTicks() {
+  if (coinsEarned <= 0) return;
+  const t = Math.min((performance.now() - gameoverAt) / 1200, 1);
+  const shown = Math.floor(coinsEarned * (1 - Math.pow(1 - t, 3)));
+  if (shown > lastTickedCoins) {
+    Audio.playCoinTick();
+    lastTickedCoins = shown;
+    if (t >= 1) Particles.triggerShake(3);
+  }
+}
+
+// Centralized end-of-run: high score, coin payout, audio/haptics.
+// Coins are banked immediately — the count-up on the gameover screen
+// is purely visual, so a refresh mid-ceremony never loses them.
+function endRun(wonRun, reason) {
+  gameState = 'gameover';
+  won = wonRun;
+  gameoverReason = reason;
+  isNewBest = Score.saveHighScore(currentMode);
+  coinsEarned = computeCoins(wonRun, currentMode);
+  Save.addCoins(coinsEarned);
+  lastTickedCoins = 0;
+  Audio.setFeverActive(false);
+  Particles.setFeverActive(false);
+  if (wonRun) {
+    Audio.playWin();
+    Input.hapticWin();
+  } else {
+    Audio.playGameOver();
+    Input.hapticGameOver();
+  }
+  Audio.stopDangerHum();
+  gameoverAt = performance.now();
+}
+
+function startGame(modeId) {
+  currentMode = modeId;
   Balls.reset();
   Score.reset();
   Particles.reset();
   Store.reset();
+  Fever.reset();
+  Audio.setFeverActive(false);
   Physics.resetCup();
+
+  // Apply permanent upgrades bought in the unlock shop
+  Store.setDiscount(Save.getUpgradeLevel('discount') * 0.10);
+  const startCup = Save.getUpgradeLevel('startCup');
+  if (startCup > 0) {
+    Store.grantFreeCupExtensions(startCup);
+    Physics.extendCup(Store.getCupExtendPx());
+  }
+
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
+  rushTimeLeftMs = MODES[modeId].timeLimitMs || 0;
+  Save.incrementGamesPlayed();
   gameState = 'playing';
   won = false;
   isNewBest = false;
@@ -349,6 +555,16 @@ function resetGame() {
   dangerLevel = 0;
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
+  coinsEarned = 0;
+}
+
+function returnToMenu() {
+  Balls.reset();
+  Particles.reset();
+  Store.reset();
+  Physics.resetCup();
+  Audio.stopDangerHum();
+  gameState = 'menu';
 }
 
 // ── Start ───────────────────────────────────────────────────────

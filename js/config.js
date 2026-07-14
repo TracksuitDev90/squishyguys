@@ -40,6 +40,44 @@ export const BALL_TIERS = [
   { name: 'rainbow',    radius: 79, color: 'rainbow', stroke: '#888888', points: 100 },
 ];
 
+// Game modes. `danger` off means the run can't end by overflow (zen);
+// `timeLimitMs` set means the run ends when the clock runs out (rush).
+export const MODES = {
+  classic: {
+    id: 'classic', label: 'CLASSIC', desc: 'fill the cup, chase the rainbow',
+    timeLimitMs: null, danger: true,
+  },
+  rush: {
+    id: 'rush', label: 'TIMED RUSH', desc: '2 minutes on the clock — go!',
+    timeLimitMs: 120000, danger: true,
+  },
+  zen: {
+    id: 'zen', label: 'ZEN', desc: 'no game over, just squish',
+    timeLimitMs: null, danger: false,
+  },
+};
+
+// Coin economy — persistent currency earned at the end of every run:
+// floor(score / COIN_SCORE_DIVISOR) + floor(merges / COIN_MERGE_DIVISOR)
+// (+ win bonus). Zen runs are unbounded, so they earn at half rate
+// with a hard cap to keep them from being the optimal coin farm.
+export const COIN_SCORE_DIVISOR = 25;
+export const COIN_MERGE_DIVISOR = 2;
+export const COIN_WIN_BONUS = 100;
+export const ZEN_COIN_SCALE = 0.5;
+export const ZEN_COIN_CAP = 200;
+
+// Fever system — chained merges fill a meter; at full it triggers a
+// short frenzy window with double points and faster drops. Roughly
+// 8-11 merges with modest combos to fill; decays when idle.
+export const FEVER_FILL_BASE = 0.07;        // meter gain per merge
+export const FEVER_FILL_COMBO_BONUS = 0.02; // extra gain per combo step
+export const FEVER_GRACE_MS = 1500;         // no decay this long after a merge
+export const FEVER_DECAY_PER_SEC = 0.06;    // ~17s to fully drain from full
+export const FEVER_DURATION_MS = 9000;      // frenzy window length
+export const FEVER_SCORE_MULT = 2;          // point multiplier while active
+export const FEVER_COOLDOWN_SCALE = 0.5;    // drop cooldown scale while active
+
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
 // Higher tiers drop less frequently.
 export const DROP_WEIGHTS = [46, 28, 15, 8, 3];

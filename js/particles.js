@@ -3,6 +3,7 @@
 // floating score text, spawn pops, and screen shake.
 
 import { BALL_TIERS } from './config.js';
+import * as Skins from './skins.js';
 
 // ── Active effect pools ─────────────────────────────────────────
 const sparkles = [];
@@ -13,12 +14,14 @@ const spawnPops = [];
 const unlockFlashes = [];
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
 let dangerPulse = 0; // 0-1, how much danger warning to show
+let feverActive = false; // ambient rising sparkles while frenzying
 
 // ── Public API ──────────────────────────────────────────────────
 
 export function emitMerge(x, y, tierIndex, comboCount) {
   const tier = BALL_TIERS[tierIndex];
-  const color = tier.color === 'rainbow' ? '#FFD700' : tier.color;
+  const style = Skins.getTierStyle(tierIndex);
+  const color = style.color === 'rainbow' ? '#FFD700' : style.color;
   const r = tier.radius;
   const intensity = Math.min(tierIndex / 9, 1); // higher tiers = more juice
 
@@ -178,9 +181,10 @@ export function emitSpawnPop(x, y, tierIndex) {
 
 export function emitUnlockFlash(tierIndex) {
   const tier = BALL_TIERS[tierIndex];
+  const style = Skins.getTierStyle(tierIndex);
   unlockFlashes.push({
     name: tier.name.toUpperCase(),
-    color: tier.color === 'rainbow' ? '#FFD700' : tier.color,
+    color: style.color === 'rainbow' ? '#FFD700' : style.color,
     life: 1,
     decay: 0.008,
   });
@@ -194,8 +198,28 @@ export function setDangerLevel(level) {
   dangerPulse = level;
 }
 
+export function setFeverActive(active) {
+  feverActive = active;
+}
+
 // ── Update ──────────────────────────────────────────────────────
 export function update() {
+  // Fever ambience: golden sparks drifting up from the bottom
+  if (feverActive && Math.random() < 0.3) {
+    sparkles.push({
+      x: 30 + Math.random() * 340,
+      y: 704,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: -(1 + Math.random() * 1.6),
+      size: 1.2 + Math.random() * 1.8,
+      color: Math.random() > 0.3 ? '#FFD700' : '#FFF3C0',
+      life: 1,
+      decay: 0.006 + Math.random() * 0.004,
+      gravity: -0.004, // floats up
+      shape: Math.random() > 0.75 ? 'star' : 'circle',
+    });
+  }
+
   // Sparkles
   for (let i = sparkles.length - 1; i >= 0; i--) {
     const p = sparkles[i];
@@ -421,4 +445,5 @@ export function reset() {
   screenShake.x = 0;
   screenShake.y = 0;
   dangerPulse = 0;
+  feverActive = false;
 }
