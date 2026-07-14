@@ -6,6 +6,8 @@ import {
   BALL_TIERS,
 } from './config.js';
 import * as Particles from './particles.js';
+import * as Menus from './menus.js';
+import * as Skins from './skins.js';
 
 // Store button layout — positioned in the header area, well above the cup
 const STORE_BUTTONS = [
@@ -54,12 +56,19 @@ export function init(canvasEl) {
   window.addEventListener('resize', handleResize);
 }
 
+// Rebuild the cached background gradients — call after a skin/theme
+// change so the new palette takes effect immediately.
+export function applyTheme() {
+  buildStaticGradients();
+}
+
 function buildStaticGradients() {
+  const theme = Skins.getActiveTheme() || ['#12122b', '#171f3f', '#1c3a63', '#1f4d7d'];
   bgGradient = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
-  bgGradient.addColorStop(0, '#12122b');
-  bgGradient.addColorStop(0.45, '#171f3f');
-  bgGradient.addColorStop(0.8, '#1c3a63');
-  bgGradient.addColorStop(1, '#1f4d7d');
+  bgGradient.addColorStop(0, theme[0]);
+  bgGradient.addColorStop(0.45, theme[1]);
+  bgGradient.addColorStop(0.8, theme[2]);
+  bgGradient.addColorStop(1, theme[3]);
 
   // Soft spotlight behind the cup — draws the eye to the play area
   const cx = (CUP_LEFT_X + CUP_RIGHT_X) / 2;
@@ -110,12 +119,28 @@ export function render(state) {
   ctx.save();
   ctx.translate(shake.x, shake.y);
 
+  drawBackground();
+
+  // Menu screens: background + particles + screen content, no cup
+  if (state.gameState === 'menu' || state.gameState === 'shop') {
+    Particles.draw(ctx);
+    ctx.fillStyle = vignetteGradient;
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    if (state.gameState === 'menu') {
+      Menus.drawMenu(ctx, state);
+    } else {
+      Menus.drawShop(ctx, state);
+    }
+    drawMuteButton(state.muted);
+    ctx.restore();
+    return;
+  }
+
   const cupExt = state.cupExtendPx || 0;
 
-  drawBackground();
-  drawDangerZone(state.dangerLevel, cupExt);
+  if (state.dangerEnabled) drawDangerZone(state.dangerLevel, cupExt);
   drawCup(cupExt);
-  drawDangerLine(state.dangerLevel, cupExt);
+  if (state.dangerEnabled) drawDangerLine(state.dangerLevel, cupExt);
   drawBalls(state.balls, state.gameState);
   Particles.draw(ctx);
 
@@ -131,6 +156,7 @@ export function render(state) {
   }
 
   drawScore(state.score, state.bestScore, state.combo);
+  drawModeStatus(state);
   drawMuteButton(state.muted);
 
   if (state.gameState === 'playing') {
@@ -139,6 +165,7 @@ export function render(state) {
 
   if (state.gameState === 'gameover') {
     drawGameOver(state);
+    Menus.drawGameOverExtras(ctx, state);
   }
 
   ctx.restore();
@@ -444,7 +471,8 @@ function drawBall(body, tierIndex, gameState) {
   } else if (tier.name === 'chrome') {
     drawChromeBall(r);
   } else {
-    drawSolidBall(r, tier.color, tier.stroke, tierIndex, body.id);
+    const style = Skins.getTierStyle(tierIndex);
+    drawSolidBall(r, style.color, style.stroke, tierIndex, body.id);
   }
 
   ctx.restore();
@@ -533,6 +561,7 @@ function drawBombVisual(r) {
 // ── Ghost Ball ─────────────────────────────────────────────────
 function drawGhostBall(body, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
+  const style = Skins.getTierStyle(tierIndex);
   const { x, y } = body.position;
   const r = tier.radius;
   const sq = getSquishState(body);
@@ -558,8 +587,8 @@ function drawGhostBall(body, tierIndex) {
 
   // Ethereal outer glow
   const glow = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.6);
-  glow.addColorStop(0, hexWithAlpha(tier.color, 0.25));
-  glow.addColorStop(0.5, hexWithAlpha(tier.color, 0.08));
+  glow.addColorStop(0, hexWithAlpha(style.color, 0.25));
+  glow.addColorStop(0.5, hexWithAlpha(style.color, 0.08));
   glow.addColorStop(1, 'rgba(200,220,255,0)');
   ctx.fillStyle = glow;
   ctx.beginPath();
@@ -568,10 +597,10 @@ function drawGhostBall(body, tierIndex) {
 
   // Main body gradient (lighter, washed out)
   const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
-  grad.addColorStop(0, lightenColor(tier.color, 80));
-  grad.addColorStop(0.3, lightenColor(tier.color, 50));
-  grad.addColorStop(0.6, lightenColor(tier.color, 20));
-  grad.addColorStop(1, tier.color);
+  grad.addColorStop(0, lightenColor(style.color, 80));
+  grad.addColorStop(0.3, lightenColor(style.color, 50));
+  grad.addColorStop(0.6, lightenColor(style.color, 20));
+  grad.addColorStop(1, style.color);
   ctx.fillStyle = grad;
 
   // Wobbly ghost outline (more wobbly than normal)
@@ -592,7 +621,7 @@ function drawGhostBall(body, tierIndex) {
 
   // Dashed ghostly stroke
   ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = hexWithAlpha(tier.stroke, 0.6);
+  ctx.strokeStyle = hexWithAlpha(style.stroke, 0.6);
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.setLineDash([]);
@@ -690,8 +719,14 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Fruit skin texture goes under the gloss so highlights read on top
-  drawFruitSkin(tierIndex, r, ballId);
+  // Skin texture goes under the gloss so highlights read on top.
+  // Non-fruit skins swap the stems/stripes for their own detail pass.
+  const detailMode = Skins.getDetailMode();
+  if (detailMode === 'fruit') {
+    drawFruitSkin(tierIndex, r, ballId);
+  } else if (detailMode === 'gloss') {
+    drawCandyGloss(r);
+  }
 
   // Per-ball randomized highlights
   const hl = ballId != null ? getBallHighlights(ballId) : {
@@ -720,7 +755,30 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   ctx.fill();
 
   // Stems, leaves, and crowns sit on top (and may poke past the edge)
-  drawFruitTopper(tierIndex, r);
+  if (detailMode === 'fruit') {
+    drawFruitTopper(tierIndex, r);
+  }
+}
+
+// Generic sheen for non-fruit skins — a curved candy shine band so
+// palette-swapped balls don't read as flat.
+function drawCandyGloss(r) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.97, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = r * 0.16;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.62, -2.4, -1.15);
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.lineWidth = r * 0.07;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.8, -0.95, -0.5);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ── Fruit Details ───────────────────────────────────────────────
@@ -1135,8 +1193,9 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQ
   } else if (ghostQueued) {
     // Ghostly preview — same ball but more transparent with dashed outline
     const tier = BALL_TIERS[tierIndex];
+    const style = Skins.getTierStyle(tierIndex);
     ctx.globalAlpha = 0.25 + Math.sin(performance.now() * 0.006) * 0.1;
-    drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+    drawSolidBall(tier.radius, style.color, style.stroke, tierIndex);
     ctx.setLineDash([4, 4]);
     ctx.strokeStyle = 'rgba(200,220,255,0.5)';
     ctx.lineWidth = 2;
@@ -1151,7 +1210,8 @@ function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQ
     } else if (tier.name === 'chrome') {
       drawChromeBall(tier.radius);
     } else {
-      drawSolidBall(tier.radius, tier.color, tier.stroke, tierIndex);
+      const style = Skins.getTierStyle(tierIndex);
+      drawSolidBall(tier.radius, style.color, style.stroke, tierIndex);
     }
   }
 
@@ -1213,6 +1273,57 @@ function drawScore(score, bestScore, combo) {
     ctx.restore();
   }
 
+  ctx.restore();
+}
+
+// ── Mode Status (rush timer / zen tag) ──────────────────────────
+function drawModeStatus(state) {
+  if (state.mode === 'rush') {
+    const ms = Math.max(0, state.rushTimeLeftMs || 0);
+    const totalSec = Math.ceil(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = String(totalSec % 60).padStart(2, '0');
+    const urgent = ms < 10000 && ms > 0;
+    const pulse = urgent ? 0.6 + Math.sin(performance.now() * 0.012) * 0.4 : 0.6;
+
+    ctx.save();
+    ctx.font = 'bold 24px "Patrick Hand", cursive';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = urgent
+      ? `rgba(231, 76, 60, ${pulse})`
+      : `rgba(255, 255, 255, ${pulse})`;
+    ctx.fillText(`${m}:${s}`, GAME_WIDTH - 16, 54);
+    ctx.restore();
+  } else if (state.mode === 'zen') {
+    ctx.save();
+    ctx.font = '16px "Patrick Hand", cursive';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(140, 220, 190, 0.5)';
+    ctx.fillText('~ zen ~', GAME_WIDTH - 16, 52);
+    ctx.restore();
+  }
+}
+
+// ── Decorative Ball (title screen etc.) ─────────────────────────
+// Draws a bobbing squishy guy at an arbitrary position/size — used by
+// menus.js so it never has to duplicate the fruit art.
+export function drawDecorBall(x, y, r, tierIndex, seed = 1) {
+  const t = performance.now() * 0.001;
+  const bob = Math.sin(t * 1.2 + seed * 2.1) * 4;
+  const tilt = Math.sin(t * 0.8 + seed * 3.7) * 0.08;
+  const tier = BALL_TIERS[tierIndex];
+
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.rotate(tilt);
+  if (tier.name === 'rainbow') {
+    drawRainbowBall(r);
+  } else if (tier.name === 'chrome') {
+    drawChromeBall(r);
+  } else {
+    const style = Skins.getTierStyle(tierIndex);
+    drawSolidBall(r, style.color, style.stroke, tierIndex, seed);
+  }
   ctx.restore();
 }
 
@@ -1295,8 +1406,13 @@ function drawGameOver(state) {
     ctx.save();
     ctx.translate(cx, cy - 80);
     ctx.scale(pulse, pulse);
-    ctx.fillStyle = '#E74C3C';
-    ctx.fillText('GAME OVER', 0, 0);
+    if (state.gameoverReason === 'time') {
+      ctx.fillStyle = '#F5A623';
+      ctx.fillText("TIME'S UP!", 0, 0);
+    } else {
+      ctx.fillStyle = '#E74C3C';
+      ctx.fillText('GAME OVER', 0, 0);
+    }
     ctx.restore();
   }
 
@@ -1341,18 +1457,11 @@ function drawGameOver(state) {
     ctx.fillText(`bank: ${(state.coinBalance || 0).toLocaleString()}`, cx, cy + 126);
   }
 
-  // Restart prompt with pulse
-  const promptAlpha = 0.4 + Math.sin(performance.now() * 0.004) * 0.2;
-  ctx.font = '18px "Patrick Hand", cursive';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = `rgba(255,255,255,${promptAlpha})`;
-  ctx.fillText('Tap to play again', cx, cy + 160);
-
   ctx.restore();
 }
 
 // Small hand-drawn coin used in payout displays
-function drawCoinIcon(x, y, r) {
+export function drawCoinIcon(x, y, r) {
   ctx.save();
   ctx.translate(x, y);
   ctx.fillStyle = '#F1C40F';

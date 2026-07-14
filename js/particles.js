@@ -3,6 +3,7 @@
 // floating score text, spawn pops, and screen shake.
 
 import { BALL_TIERS } from './config.js';
+import * as Skins from './skins.js';
 
 // ── Active effect pools ─────────────────────────────────────────
 const sparkles = [];
@@ -18,7 +19,8 @@ let dangerPulse = 0; // 0-1, how much danger warning to show
 
 export function emitMerge(x, y, tierIndex, comboCount) {
   const tier = BALL_TIERS[tierIndex];
-  const color = tier.color === 'rainbow' ? '#FFD700' : tier.color;
+  const style = Skins.getTierStyle(tierIndex);
+  const color = style.color === 'rainbow' ? '#FFD700' : style.color;
   const r = tier.radius;
   const intensity = Math.min(tierIndex / 9, 1); // higher tiers = more juice
 
@@ -178,9 +180,10 @@ export function emitSpawnPop(x, y, tierIndex) {
 
 export function emitUnlockFlash(tierIndex) {
   const tier = BALL_TIERS[tierIndex];
+  const style = Skins.getTierStyle(tierIndex);
   unlockFlashes.push({
     name: tier.name.toUpperCase(),
-    color: tier.color === 'rainbow' ? '#FFD700' : tier.color,
+    color: style.color === 'rainbow' ? '#FFD700' : style.color,
     life: 1,
     decay: 0.008,
   });

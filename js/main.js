@@ -1,7 +1,7 @@
 // ── Squishy Guys — Main Game Loop ───────────────────────────────
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
-  BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS,
+  BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
   COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
   ZEN_COIN_SCALE, ZEN_COIN_CAP,
 } from './config.js';
@@ -14,9 +14,12 @@ import * as Particles from './particles.js';
 import * as Audio from './audio.js';
 import * as Store from './store.js';
 import * as Save from './save.js';
+import * as Menus from './menus.js';
+import * as Skins from './skins.js';
 
 // ── State ───────────────────────────────────────────────────────
-let gameState = 'playing'; // 'playing' | 'gameover'
+let gameState = 'menu'; // 'menu' | 'shop' | 'playing' | 'gameover'
+let currentMode = 'classic'; // 'classic' | 'rush' | 'zen'
 let currentDropTier = 0;
 let nextDropTier = 0;
 let lastDropTime = 0;
@@ -27,6 +30,8 @@ let previouslyUnlocked = new Set([0, 1, 2, 3]);
 let seenBombEffect = null; // last bomb effect we played the suck sound for
 let coinsEarned = 0; // coins awarded for the run that just ended
 let gameoverAt = 0; // drives restart guard + coin count-up ceremony
+let gameoverReason = 'danger'; // 'danger' | 'time' | 'rainbow'
+let rushTimeLeftMs = 0;
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -79,7 +84,7 @@ function setup() {
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
 
-  // Handle mute button and store clicks
+  // Handle mute button, menu, and store clicks
   canvas.addEventListener('mousedown', handleUIClick);
   canvas.addEventListener('touchstart', handleUITouch, { passive: false });
 
@@ -96,7 +101,7 @@ function checkNewUnlocks() {
   }
 }
 
-// ── UI Click Handling (Mute + Store) ────────────────────────────
+// ── UI Click Handling (per-state dispatch) ──────────────────────
 function handleUIClick(e) {
   const rect = e.target.getBoundingClientRect();
   const scaleX = GAME_WIDTH / rect.width;
@@ -121,7 +126,7 @@ function handleUITouch(e) {
 }
 
 function checkUIHit(x, y) {
-  // Mute button
+  // Mute button — active in every state
   const btn = Renderer.MUTE_BTN;
   const dist = Math.sqrt((x - btn.x) ** 2 + (y - btn.y) ** 2);
   if (dist < btn.size) {
@@ -130,26 +135,96 @@ function checkUIHit(x, y) {
     return true;
   }
 
-  if (gameState !== 'playing') return false;
-
-  // Store buttons
-  const storeHit = Renderer.checkStoreButtonHit(x, y);
-  if (storeHit) {
-    const result = Store.purchase(storeHit, Score.current);
-    if (result.success) {
-      Score.spend(result.cost);
-
-      if (storeHit === 'cupExtend') {
-        applyNewCupExtension();
+  switch (gameState) {
+    case 'menu': {
+      const hit = Menus.checkMenuHit(x, y);
+      if (hit === 'shop') {
+        Audio.playDrop(2);
+        gameState = 'shop';
+      } else if (hit && MODES[hit]) {
+        Audio.playMerge(3, 1);
+        startGame(hit);
       }
-      // colorBomb just queues the bomb for next drop (handled in drop logic)
-
-      Audio.playMerge(5, 1); // satisfying purchase sound
+      // Consume every tap in the menu so a stray press can never
+      // leak a dropRequested into the first playing frame
       Input.state.uiConsumed = true;
       return true;
     }
+
+    case 'shop': {
+      const hit = Menus.checkShopHit(x, y);
+      if (hit) handleShopAction(hit);
+      Input.state.uiConsumed = true;
+      return true;
+    }
+
+    case 'gameover': {
+      const hit = Menus.checkGameOverHit(x, y);
+      if (hit && performance.now() - gameoverAt > 800) {
+        if (hit === 'again') {
+          Audio.playMerge(3, 1);
+          startGame(currentMode);
+        } else {
+          Audio.playDrop(2);
+          returnToMenu();
+        }
+        Input.state.uiConsumed = true;
+        return true;
+      }
+      // Taps elsewhere fall through to the tap-anywhere restart
+      return false;
+    }
+
+    case 'playing': {
+      const storeHit = Renderer.checkStoreButtonHit(x, y);
+      if (storeHit) {
+        const result = Store.purchase(storeHit, Score.current);
+        if (result.success) {
+          Score.spend(result.cost);
+
+          if (storeHit === 'cupExtend') {
+            applyNewCupExtension();
+          }
+          // colorBomb just queues the bomb for next drop (handled in drop logic)
+
+          Audio.playMerge(5, 1); // satisfying purchase sound
+          Input.state.uiConsumed = true;
+          return true;
+        }
+      }
+      return false;
+    }
   }
   return false;
+}
+
+function handleShopAction(hit) {
+  if (hit.type === 'back') {
+    Audio.playDrop(2);
+    gameState = 'menu';
+    return;
+  }
+
+  if (hit.type === 'skin') {
+    if (Save.isSkinUnlocked(hit.id)) {
+      if (Skins.selectSkin(hit.id)) {
+        Renderer.applyTheme();
+        Audio.playDrop(3);
+      }
+    } else if (Skins.purchaseSkin(hit.id)) {
+      Renderer.applyTheme();
+      Audio.playMerge(5, 2); // cha-ching
+      Particles.triggerShake(4);
+    }
+    return;
+  }
+
+  if (hit.type === 'upgrade') {
+    if (Skins.purchaseUpgrade(hit.id)) {
+      Audio.playMerge(5, 2);
+      Particles.triggerShake(4);
+    }
+  }
 }
 
 // ── Coin Payout ─────────────────────────────────────────────────
@@ -200,6 +275,21 @@ function updateDangerLevel() {
   Audio.updateDangerHum(dangerLevel);
 }
 
+// Zen has no game over: a ball that lingers above the line gently
+// pops instead, banking its points and making room in the cup.
+function zenOverflowRelief() {
+  const expired = Balls.findExpiredDangerBall(getEffectiveDangerY());
+  if (!expired) return;
+  const popped = Balls.popBall(expired.body.id);
+  if (!popped || popped.tierIndex < 0) return;
+
+  const points = BALL_TIERS[popped.tierIndex].points;
+  Score.addPoints(points);
+  Particles.emitMerge(popped.x, popped.y, popped.tierIndex, 1);
+  Particles.emitScorePopup(popped.x, popped.y, points, 1);
+  Audio.playDrop(popped.tierIndex);
+}
+
 // ── Game Loop ───────────────────────────────────────────────────
 let lastTime = 0;
 
@@ -209,7 +299,13 @@ function loop(timestamp) {
   const delta = lastTime ? Math.min(timestamp - lastTime, 32) : 16.67;
   lastTime = timestamp;
 
-  if (gameState === 'playing') {
+  if (gameState === 'menu' || gameState === 'shop') {
+    // Belt and suspenders with checkUIHit's consume-everything: no
+    // tap on a menu screen may ever become a ball drop
+    Input.state.dropRequested = false;
+  } else if (gameState === 'playing') {
+    const modeCfg = MODES[currentMode];
+
     // Handle drop / ghost activation
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
@@ -268,31 +364,54 @@ function loop(timestamp) {
       checkNewUnlocks();
     }
 
-    // Update danger
-    updateDangerLevel();
-
-    // Check win
-    if (Balls.hasRainbow()) {
-      Score.addPoints(500);
-      endRun(true);
-
-      // Big celebration particles
-      const cx = GAME_WIDTH / 2;
-      const cy = GAME_HEIGHT / 2;
-      Particles.emitMerge(cx, cy, 9, 5);
+    // Update danger (zen relieves overflow instead of ending the run)
+    if (modeCfg.danger) {
+      updateDangerLevel();
+    } else {
+      dangerLevel = 0;
+      Particles.setDangerLevel(0);
+      zenOverflowRelief();
     }
-    // Check game over
-    else if (Balls.checkGameOver(getEffectiveDangerY())) {
-      endRun(false);
+
+    // Rush: count down with the frame delta — rAF pauses in background
+    // tabs so the clock pauses too (never diff wall-clock here)
+    if (modeCfg.timeLimitMs) {
+      rushTimeLeftMs = Math.max(0, rushTimeLeftMs - delta);
+    }
+
+    // End-of-run checks
+    if (Balls.hasRainbow()) {
+      if (currentMode === 'zen') {
+        // Zen: celebrate the rainbow, then it floats away and play continues
+        const rb = Balls.consumeRainbow();
+        if (rb) {
+          Score.addPoints(500);
+          Particles.emitMerge(rb.x, rb.y, 9, 5);
+          Particles.emitScorePopup(rb.x, rb.y, 500, 1);
+          Audio.playWin();
+          Input.hapticWin();
+        }
+      } else {
+        Score.addPoints(500);
+        endRun(true, 'rainbow');
+
+        // Big celebration particles
+        Particles.emitMerge(GAME_WIDTH / 2, GAME_HEIGHT / 2, 9, 5);
+      }
+    } else if (modeCfg.danger && Balls.checkGameOver(getEffectiveDangerY())) {
+      endRun(false, 'danger');
+    } else if (modeCfg.timeLimitMs && rushTimeLeftMs <= 0) {
+      endRun(false, 'time');
     }
   } else if (gameState === 'gameover') {
     Physics.step(delta);
 
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
-      // Small delay to avoid accidental restart
+      // Tap anywhere (outside the buttons) replays the same mode.
+      // Small delay to avoid accidental restart.
       if (performance.now() - gameoverAt > 800) {
-        resetGame();
+        startGame(currentMode);
       }
     }
   }
@@ -308,16 +427,20 @@ function loop(timestamp) {
   // Render
   Renderer.render({
     gameState,
+    mode: currentMode,
+    rushTimeLeftMs,
+    dangerEnabled: MODES[currentMode].danger,
     balls: Balls.getAll(),
     previewX: Input.state.pointerX,
     previewTier: currentDropTier,
     score: Score.current,
-    bestScore: Math.max(Score.getHighScore(), Score.current),
+    bestScore: Math.max(Score.getHighScore(currentMode), Score.current),
     bestCombo: Math.max(Score.bestCombo, Score.getBestCombo()),
     combo: Score.combo,
     mergeEffects: Balls.mergeEffects,
     won,
     isNewBest,
+    gameoverReason,
     coinsEarned,
     gameoverAt,
     coinBalance: Save.getCoins(),
@@ -345,11 +468,12 @@ function loop(timestamp) {
 // Centralized end-of-run: high score, coin payout, audio/haptics.
 // Coins are banked immediately — the count-up on the gameover screen
 // is purely visual, so a refresh mid-ceremony never loses them.
-function endRun(wonRun) {
+function endRun(wonRun, reason) {
   gameState = 'gameover';
   won = wonRun;
-  isNewBest = Score.saveHighScore('classic');
-  coinsEarned = computeCoins(wonRun, 'classic');
+  gameoverReason = reason;
+  isNewBest = Score.saveHighScore(currentMode);
+  coinsEarned = computeCoins(wonRun, currentMode);
   Save.addCoins(coinsEarned);
   if (wonRun) {
     Audio.playWin();
@@ -362,14 +486,26 @@ function endRun(wonRun) {
   gameoverAt = performance.now();
 }
 
-function resetGame() {
+function startGame(modeId) {
+  currentMode = modeId;
   Balls.reset();
   Score.reset();
   Particles.reset();
   Store.reset();
   Physics.resetCup();
+
+  // Apply permanent upgrades bought in the unlock shop
+  Store.setDiscount(Save.getUpgradeLevel('discount') * 0.10);
+  const startCup = Save.getUpgradeLevel('startCup');
+  if (startCup > 0) {
+    Store.grantFreeCupExtensions(startCup);
+    Physics.extendCup(Store.getCupExtendPx());
+  }
+
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
+  rushTimeLeftMs = MODES[modeId].timeLimitMs || 0;
+  Save.incrementGamesPlayed();
   gameState = 'playing';
   won = false;
   isNewBest = false;
@@ -378,6 +514,15 @@ function resetGame() {
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
   coinsEarned = 0;
+}
+
+function returnToMenu() {
+  Balls.reset();
+  Particles.reset();
+  Store.reset();
+  Physics.resetCup();
+  Audio.stopDangerHum();
+  gameState = 'menu';
 }
 
 // ── Start ───────────────────────────────────────────────────────

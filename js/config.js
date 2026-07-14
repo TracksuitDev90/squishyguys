@@ -40,6 +40,23 @@ export const BALL_TIERS = [
   { name: 'rainbow',    radius: 79, color: 'rainbow', stroke: '#888888', points: 100 },
 ];
 
+// Game modes. `danger` off means the run can't end by overflow (zen);
+// `timeLimitMs` set means the run ends when the clock runs out (rush).
+export const MODES = {
+  classic: {
+    id: 'classic', label: 'CLASSIC', desc: 'fill the cup, chase the rainbow',
+    timeLimitMs: null, danger: true,
+  },
+  rush: {
+    id: 'rush', label: 'TIMED RUSH', desc: '2 minutes on the clock — go!',
+    timeLimitMs: 120000, danger: true,
+  },
+  zen: {
+    id: 'zen', label: 'ZEN', desc: 'no game over, just squish',
+    timeLimitMs: null, danger: false,
+  },
+};
+
 // Coin economy — persistent currency earned at the end of every run:
 // floor(score / COIN_SCORE_DIVISOR) + floor(merges / COIN_MERGE_DIVISOR)
 // (+ win bonus). Zen runs are unbounded, so they earn at half rate

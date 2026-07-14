@@ -34,12 +34,26 @@ let ghostQueued = false; // next drop will be a ghost ball
 let cupExtensions = 0;
 const CUP_EXTEND_PX = 35; // how much each extension adds
 
+// Permanent HAGGLER upgrade: 0-0.3 price reduction, set by main.js at
+// run start. Survives reset() — it's re-applied every startGame anyway.
+let discount = 0;
+
+export function setDiscount(pct) {
+  discount = Math.max(0, Math.min(pct, 0.9));
+}
+
+// Permanent TALL CUP upgrade: pre-grant extensions at run start without
+// charging or inflating the CUP+ price ladder.
+export function grantFreeCupExtensions(n) {
+  cupExtensions += n;
+}
+
 export function getPrice(itemId) {
   const item = STORE_ITEMS.find(i => i.id === itemId);
   if (!item) return Infinity;
   const count = purchaseCounts[itemId] || 0;
-  // Price doubles per purchase: base, 2x, 3x, 4x ...
-  return Math.round(item.basePrice * (1 + count));
+  // Price scales per purchase: base, 2x, 3x, 4x ...
+  return Math.round(item.basePrice * (1 + count) * (1 - discount));
 }
 
 export function canAfford(itemId, currentScore) {
