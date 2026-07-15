@@ -1,4 +1,4 @@
-// ── Squishy Guys — Main Game Loop ───────────────────────────────
+// ── Squishy Fruit — Main Game Loop ──────────────────────────────
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
   BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
@@ -91,7 +91,47 @@ function setup() {
   canvas.addEventListener('mousedown', handleUIClick);
   canvas.addEventListener('touchstart', handleUITouch, { passive: false });
 
+  setupMobileFullscreen();
+
   requestAnimationFrame(loop);
+}
+
+// ── Mobile Fullscreen ───────────────────────────────────────────
+// Android (and other mobile browsers with the Fullscreen API): promote
+// to true fullscreen on the first tap — the API only works inside a
+// user gesture. iOS Safari has no Fullscreen API on iPhone; there,
+// fullscreen comes from the home-screen standalone mode configured in
+// index.html + manifest.webmanifest, so this quietly does nothing.
+function setupMobileFullscreen() {
+  if (!Input.getIsTouchDevice()) return;
+  // Already running as an installed/standalone app — nothing to do
+  if (navigator.standalone ||
+      window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches) {
+    return;
+  }
+
+  const onTap = () => {
+    if (document.fullscreenElement) {
+      window.removeEventListener('touchend', onTap);
+      return;
+    }
+    const el = document.documentElement;
+    const request = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!request) {
+      window.removeEventListener('touchend', onTap);
+      return;
+    }
+    try {
+      const p = request.call(el, { navigationUI: 'hide' });
+      if (p && p.then) {
+        p.then(() => window.removeEventListener('touchend', onTap))
+         .catch(() => {}); // rejected (e.g. iOS) — keep playing windowed
+      }
+    } catch {
+      window.removeEventListener('touchend', onTap);
+    }
+  };
+  window.addEventListener('touchend', onTap, { passive: true });
 }
 
 function checkNewUnlocks() {

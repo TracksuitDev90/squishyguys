@@ -64,7 +64,7 @@ function drawPanel(ctx, btn, { accent = '255, 255, 255', alpha = 1, wobbleSeed =
 
 // ── Title / Mode Select ─────────────────────────────────────────
 export function drawMenu(ctx) {
-  // Decorative squishy guys drifting around the edges
+  // Decorative squishy fruit drifting around the edges
   drawDecorBall(58, 84, 17, 1, 11);
   drawDecorBall(330, 68, 15, 2, 37);
   drawDecorBall(354, 212, 26, 4, 23);
@@ -83,9 +83,9 @@ export function drawMenu(ctx) {
   ctx.scale(breathe, breathe);
   ctx.font = 'bold 44px "Patrick Hand", cursive';
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fillText('SQUISHY GUYS', 2, 3);
+  ctx.fillText('SQUISHY FRUIT', 2, 3);
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillText('SQUISHY GUYS', 0, 0);
+  ctx.fillText('SQUISHY FRUIT', 0, 0);
   ctx.restore();
 
   ctx.font = '17px "Patrick Hand", cursive';

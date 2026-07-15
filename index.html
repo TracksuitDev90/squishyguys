@@ -2,12 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <!-- viewport-fit=cover lets the game extend edge-to-edge on notched phones -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#12122b">
-  <meta name="description" content="Squishy Guys — drop, squish and merge colorful jelly balls to reach the rainbow!">
+  <meta name="description" content="Squishy Fruit — drop, squish and merge colorful jelly fruits to reach the rainbow!">
+  <!-- iOS: fullscreen when launched from the home screen -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Squishy Guys</title>
+  <meta name="apple-mobile-web-app-title" content="Squishy Fruit">
+  <!-- Android: fullscreen when launched from the home screen (with manifest below) -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="manifest.webmanifest">
+  <title>Squishy Fruit</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2255%22 r=%2240%22 fill=%22%232ECC71%22 stroke=%22%2327AE60%22 stroke-width=%224%22/><ellipse cx=%2238%22 cy=%2240%22 rx=%2212%22 ry=%227%22 fill=%22white%22 opacity=%220.5%22/></svg>">
 
   <!-- Hand-drawn font -->
@@ -34,15 +40,21 @@
       user-select: none;
     }
 
-    #game {
-      display: block;
-      margin: 0 auto;
-      cursor: pointer;
+    /* Pin the play area to the visual viewport and center the canvas —
+       keeps the game truly fullscreen on mobile (no rubber-banding,
+       no gap when browser chrome collapses) */
+    body {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overscroll-behavior: none; /* prevent pull-to-refresh */
     }
 
-    /* Prevent pull-to-refresh on mobile */
-    body {
-      overscroll-behavior: none;
+    #game {
+      display: block;
+      cursor: pointer;
     }
   </style>
 </head>
