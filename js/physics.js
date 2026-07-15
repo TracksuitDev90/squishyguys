@@ -2,7 +2,7 @@
 import {
   GAME_WIDTH, GAME_HEIGHT, GRAVITY,
   CUP_WALL_THICKNESS, CUP_BOTTOM_Y, CUP_TOP_Y,
-  CUP_LEFT_X, CUP_RIGHT_X,
+  CUP_LEFT_X, CUP_RIGHT_X, CUP_BASE_EXTRA,
   BALL_RESTITUTION, BALL_FRICTION, BALL_DENSITY,
   BALL_TIERS,
 } from './config.js';
@@ -40,74 +40,21 @@ export function getEngine() {
 }
 
 // ── Cup Construction ────────────────────────────────────────────
-function buildCup() {
-  const wallOptions = {
-    isStatic: true,
-    friction: 0.3,
-    restitution: 0.2,
-    render: { visible: false },
-    label: 'cup-wall',
-  };
-
-  const wallHeight = CUP_BOTTOM_Y - CUP_TOP_Y + 60;
-  const wallCenterY = CUP_TOP_Y + wallHeight / 2 - 30;
-
-  // Left wall
-  const leftWall = Bodies.rectangle(
-    CUP_LEFT_X - CUP_WALL_THICKNESS / 2,
-    wallCenterY,
-    CUP_WALL_THICKNESS,
-    wallHeight,
-    wallOptions
+// A static rectangle whose long axis runs along the segment
+// (x1,y1)→(x2,y2). Used for the slanted side walls: the cup flares
+// outward so the base is CUP_BASE_EXTRA wider per side than the rim.
+function wallFromSegment(x1, y1, x2, y2, options) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  return Bodies.rectangle(
+    (x1 + x2) / 2, (y1 + y2) / 2,
+    CUP_WALL_THICKNESS, len,
+    { ...options, angle: Math.atan2(-dx, dy) }
   );
-
-  // Right wall
-  const rightWall = Bodies.rectangle(
-    CUP_RIGHT_X + CUP_WALL_THICKNESS / 2,
-    wallCenterY,
-    CUP_WALL_THICKNESS,
-    wallHeight,
-    wallOptions
-  );
-
-  // Floor
-  const floor = Bodies.rectangle(
-    (CUP_LEFT_X + CUP_RIGHT_X) / 2,
-    CUP_BOTTOM_Y + CUP_WALL_THICKNESS / 2,
-    CUP_RIGHT_X - CUP_LEFT_X + CUP_WALL_THICKNESS * 2,
-    CUP_WALL_THICKNESS,
-    { ...wallOptions, label: 'cup-floor' }
-  );
-
-  // Invisible ceiling walls to keep things from flying out sideways
-  const leftCeiling = Bodies.rectangle(
-    CUP_LEFT_X / 2,
-    CUP_TOP_Y - 80,
-    CUP_LEFT_X,
-    20,
-    { ...wallOptions, label: 'boundary' }
-  );
-
-  const rightCeiling = Bodies.rectangle(
-    CUP_RIGHT_X + (GAME_WIDTH - CUP_RIGHT_X) / 2,
-    CUP_TOP_Y - 80,
-    GAME_WIDTH - CUP_RIGHT_X,
-    20,
-    { ...wallOptions, label: 'boundary' }
-  );
-
-  cupBodies = [leftWall, rightWall, floor, leftCeiling, rightCeiling];
-  Composite.add(engine.world, cupBodies);
 }
 
-// ── Cup Extension (rebuild walls taller) ────────────────────────
-export function extendCup(totalExtendPx) {
-  // Remove old cup bodies
-  for (const b of cupBodies) {
-    Composite.remove(engine.world, b);
-  }
-  cupBodies = [];
-
+function buildCup(totalExtendPx = 0) {
   const wallOptions = {
     isStatic: true,
     friction: 0.3,
@@ -117,31 +64,48 @@ export function extendCup(totalExtendPx) {
   };
 
   const effectiveTopY = CUP_TOP_Y - totalExtendPx;
-  const wallHeight = CUP_BOTTOM_Y - effectiveTopY + 60;
-  const wallCenterY = effectiveTopY + wallHeight / 2 - 30;
+  const rimY = effectiveTopY - 20;   // where the drawn walls start
+  const wallTopY = rimY - 40;        // physics walls extend past the rim
+  const baseY = CUP_BOTTOM_Y;
 
-  const leftWall = Bodies.rectangle(
-    CUP_LEFT_X - CUP_WALL_THICKNESS / 2, wallCenterY,
-    CUP_WALL_THICKNESS, wallHeight, wallOptions
+  // Inner wall face x at a given y — walls lean outward toward the base
+  const flare = (y) => CUP_BASE_EXTRA * (y - rimY) / (baseY - rimY);
+  const half = CUP_WALL_THICKNESS / 2;
+
+  const leftWall = wallFromSegment(
+    CUP_LEFT_X - flare(wallTopY) - half, wallTopY,
+    CUP_LEFT_X - CUP_BASE_EXTRA - half, baseY + half,
+    wallOptions
   );
-  const rightWall = Bodies.rectangle(
-    CUP_RIGHT_X + CUP_WALL_THICKNESS / 2, wallCenterY,
-    CUP_WALL_THICKNESS, wallHeight, wallOptions
+  const rightWall = wallFromSegment(
+    CUP_RIGHT_X + flare(wallTopY) + half, wallTopY,
+    CUP_RIGHT_X + CUP_BASE_EXTRA + half, baseY + half,
+    wallOptions
   );
+
+  // Floor spans the widened base
   const floor = Bodies.rectangle(
     (CUP_LEFT_X + CUP_RIGHT_X) / 2,
     CUP_BOTTOM_Y + CUP_WALL_THICKNESS / 2,
-    CUP_RIGHT_X - CUP_LEFT_X + CUP_WALL_THICKNESS * 2,
-    CUP_WALL_THICKNESS, { ...wallOptions, label: 'cup-floor' }
+    CUP_RIGHT_X - CUP_LEFT_X + CUP_BASE_EXTRA * 2 + CUP_WALL_THICKNESS * 2,
+    CUP_WALL_THICKNESS,
+    { ...wallOptions, label: 'cup-floor' }
   );
+
+  // Invisible ceiling walls to keep things from flying out sideways
   const leftCeiling = Bodies.rectangle(
-    CUP_LEFT_X / 2, effectiveTopY - 80,
-    CUP_LEFT_X, 20,
+    CUP_LEFT_X / 2,
+    effectiveTopY - 80,
+    CUP_LEFT_X,
+    20,
     { ...wallOptions, label: 'boundary' }
   );
+
   const rightCeiling = Bodies.rectangle(
-    CUP_RIGHT_X + (GAME_WIDTH - CUP_RIGHT_X) / 2, effectiveTopY - 80,
-    GAME_WIDTH - CUP_RIGHT_X, 20,
+    CUP_RIGHT_X + (GAME_WIDTH - CUP_RIGHT_X) / 2,
+    effectiveTopY - 80,
+    GAME_WIDTH - CUP_RIGHT_X,
+    20,
     { ...wallOptions, label: 'boundary' }
   );
 
@@ -149,12 +113,22 @@ export function extendCup(totalExtendPx) {
   Composite.add(engine.world, cupBodies);
 }
 
-export function resetCup() {
-  // Remove extended cup and rebuild default
+function removeCupBodies() {
   for (const b of cupBodies) {
     Composite.remove(engine.world, b);
   }
   cupBodies = [];
+}
+
+// ── Cup Extension (rebuild walls taller) ────────────────────────
+export function extendCup(totalExtendPx) {
+  removeCupBodies();
+  buildCup(totalExtendPx);
+}
+
+export function resetCup() {
+  // Remove extended cup and rebuild default
+  removeCupBodies();
   buildCup();
 }
 
@@ -163,13 +137,13 @@ export function createBallBody(x, y, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
 
   // Smaller balls are bouncier and squishier, larger balls feel heavier/fluid
-  // Bounce: white=0.55, gradually decreasing to 0.1 for the biggest balls
+  // Bounce: coconut=0.55, gradually decreasing to 0.1 for the biggest balls
   const restitution = Math.max(0.1, 0.55 - tierIndex * 0.06);
   // Friction: smaller balls slide more easily between others
   let friction = BALL_FRICTION;
   if (tierIndex <= 3) {
     const squishiness = 1 - (tierIndex / 3);
-    friction = BALL_FRICTION * (0.4 + 0.6 * (1 - squishiness)); // white=0.02, orange=0.05
+    friction = BALL_FRICTION * (0.4 + 0.6 * (1 - squishiness)); // coconut=0.02, orange=0.05
   }
 
   const body = Bodies.circle(x, y, tier.radius, {

@@ -6,8 +6,8 @@
 import { BALL_TIERS } from './config.js';
 import * as Save from './save.js';
 
-// Palettes cover tiers 0-7; chrome and rainbow (8-9) stay special in
-// every skin — they're the goal fruits.
+// Palettes cover tiers 0-7; dragonfruit and rainbow (8-9) stay special
+// in every skin — they're the goal fruits.
 export const SKINS = [
   {
     id: 'classic', name: 'FRUIT SALAD', price: 0, detail: 'fruit',
@@ -89,7 +89,7 @@ export function refresh() {
 }
 
 // The renderer's single color source for tier fills/strokes.
-// Falls back to BALL_TIERS for chrome/rainbow and the classic skin.
+// Falls back to BALL_TIERS for dragonfruit/rainbow and the classic skin.
 export function getTierStyle(tierIndex) {
   const skin = resolveActiveSkin();
   if (skin.palette && skin.palette[tierIndex]) return skin.palette[tierIndex];

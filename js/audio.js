@@ -10,15 +10,15 @@ let pitchMult = 1;
 
 // Note frequencies for merge sounds (descending — bigger balls = deeper pitch)
 const MERGE_NOTES = [
-  659.25, // E5 - white→red (smallest, highest pitch)
-  587.33, // D5 - red→yellow
-  523.25, // C5 - yellow→orange
-  493.88, // B4 - orange→green
-  440.00, // A4 - green→blue
-  392.00, // G4 - blue→indigo
-  349.23, // F4 - indigo→violet
-  329.63, // E4 - violet→chrome
-  293.66, // D4 - chrome→rainbow
+  659.25, // E5 - coconut→cherry (smallest, highest pitch)
+  587.33, // D5 - cherry→lemon
+  523.25, // C5 - lemon→orange
+  493.88, // B4 - orange→watermelon
+  440.00, // A4 - watermelon→blueberry
+  392.00, // G4 - blueberry→grape
+  349.23, // F4 - grape→plum
+  329.63, // E4 - plum→dragonfruit
+  293.66, // D4 - dragonfruit→rainbow
   261.63, // C4 - rainbow bonus (biggest, deepest pitch)
 ];
 

@@ -4,7 +4,10 @@
 // scores, settings. Legacy keys (pre-save-system high score/combo)
 // are migrated on first load but left in place for rollback safety.
 
-const SAVE_KEY = 'squishyguys_save_v1';
+const SAVE_KEY = 'squishyfruit_save_v1';
+// Keys from before the game was renamed from Squishy Guys — the save
+// doc migrates on first load, older keys stay put for rollback safety.
+const LEGACY_SAVE_KEY = 'squishyguys_save_v1';
 const LEGACY_SCORE_KEY = 'squishyguys_highscore';
 const LEGACY_COMBO_KEY = 'squishyguys_bestcombo';
 
@@ -47,12 +50,16 @@ function load() {
   let stored = null;
   try {
     stored = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (!stored) {
+      stored = JSON.parse(localStorage.getItem(LEGACY_SAVE_KEY));
+    }
   } catch {
     stored = null;
   }
 
   if (stored && typeof stored === 'object') {
     save = mergeWithDefaults(DEFAULT_SAVE, stored);
+    persist(); // re-home saves loaded from the pre-rename key
   } else {
     save = mergeWithDefaults(DEFAULT_SAVE, null);
     // First run (or corrupt doc): pull in the legacy high score/combo
