@@ -3,7 +3,7 @@ import {
   GAME_WIDTH, GAME_HEIGHT,
   CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y,
   CUP_WALL_THICKNESS, CUP_BASE_EXTRA, DANGER_LINE_Y, DROP_Y,
-  BALL_TIERS,
+  BALL_TIERS, INK, LEAF_GREEN,
 } from './config.js';
 import * as Particles from './particles.js';
 import * as Menus from './menus.js';
@@ -441,7 +441,7 @@ function drawBall(body, tierIndex, gameState) {
     const prevSpeed = Math.sqrt(sq.prevVx * sq.prevVx + sq.prevVy * sq.prevVy);
 
     if (impact > 1.2 && prevSpeed > 1.4) {
-      sq.squash = Math.min(sq.squash + impact * 0.045 * goo, 0.45);
+      sq.squash = Math.min(sq.squash + impact * 0.050 * goo, 0.50);
       sq.deformAngle = Math.atan2(sq.prevVy, sq.prevVx);
     } else if (speed > 0.6) {
       // While moving freely, deform along the direction of travel
@@ -450,21 +450,21 @@ function drawBall(body, tierIndex, gameState) {
 
     // Damped spring: overshoots past rest into a stretch, then settles —
     // that overshoot IS the jelly wobble. Gooier balls = looser spring.
-    const stiffness = tierIndex <= 3 ? 0.16 + tierIndex * 0.02 : 0.22;
-    const damping = tierIndex <= 3 ? 0.78 : 0.7;
+    const stiffness = tierIndex <= 3 ? 0.145 + tierIndex * 0.018 : 0.20;
+    const damping = tierIndex <= 3 ? 0.80 : 0.72;
     sq.squashVel += -sq.squash * stiffness;
     sq.squashVel *= damping;
     sq.squash += sq.squashVel;
 
     // Free-fall stretch: elongate along the motion vector
-    const stretch = Math.min(speed * 0.011 * goo, 0.22);
+    const stretch = Math.min(speed * 0.012 * goo, 0.24);
 
-    const squash = Math.max(-0.22, Math.min(sq.squash, 0.45));
+    const squash = Math.max(-0.24, Math.min(sq.squash, 0.50));
     let along = 1 + stretch - squash;        // axis of motion
     let perp = 1 - stretch * 0.55 + squash * 0.8; // bulge sideways on impact
 
     // Idle wobble (subtle breathing) — gooier balls wobble more
-    const wobbleAmp = tierIndex <= 3 ? 0.007 + (3 - tierIndex) * 0.004 : 0.006;
+    const wobbleAmp = tierIndex <= 3 ? 0.008 + (3 - tierIndex) * 0.0044 : 0.0066;
     const wobbleTime = performance.now() * 0.002 + body.id * 1.7;
     along += Math.sin(wobbleTime) * wobbleAmp;
     perp += Math.cos(wobbleTime * 1.3) * wobbleAmp;
@@ -539,13 +539,8 @@ function drawBombVisual(r) {
   ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
   ctx.fill();
 
-  // Dark core
-  const coreGrad = ctx.createRadialGradient(-r * 0.2, -r * 0.25, r * 0.05, 0, 0, r);
-  coreGrad.addColorStop(0, '#555');
-  coreGrad.addColorStop(0.3, '#333');
-  coreGrad.addColorStop(0.7, '#1a1a1a');
-  coreGrad.addColorStop(1, '#000');
-  ctx.fillStyle = coreGrad;
+  // Dark core — flat, doodle-style
+  ctx.fillStyle = '#20242e';
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
@@ -572,11 +567,13 @@ function drawBombVisual(r) {
   ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Highlight dot
-  ctx.fillStyle = 'rgba(255, 150, 150, 0.5)';
+  // Shine tick
+  ctx.strokeStyle = 'rgba(255, 180, 180, 0.6)';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(-r * 0.25, -r * 0.3, r * 0.12, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(0, 0, r * 0.68, -2.4, -1.9);
+  ctx.stroke();
 }
 
 // ── Ghost Ball ─────────────────────────────────────────────────
@@ -606,52 +603,20 @@ function drawGhostBall(body, tierIndex) {
   const ghostAlpha = 0.3 + Math.sin(time * 2) * 0.08;
   ctx.globalAlpha = ghostAlpha;
 
-  // Ethereal outer glow
-  const glow = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.6);
-  glow.addColorStop(0, hexWithAlpha(style.color, 0.25));
-  glow.addColorStop(0.5, hexWithAlpha(style.color, 0.08));
-  glow.addColorStop(1, 'rgba(200,220,255,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 1.6, 0, Math.PI * 2);
-  ctx.fill();
+  // Flat washed-out body on an extra-wobbly doodle outline
+  const ghostPath = wobblyCirclePath(0, 0, r, body.id, 0.04);
+  ctx.fillStyle = lightenColor(style.color, 45);
+  ctx.fill(ghostPath);
 
-  // Main body gradient (lighter, washed out)
-  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
-  grad.addColorStop(0, lightenColor(style.color, 80));
-  grad.addColorStop(0.3, lightenColor(style.color, 50));
-  grad.addColorStop(0.6, lightenColor(style.color, 20));
-  grad.addColorStop(1, style.color);
-  ctx.fillStyle = grad;
-
-  // Wobbly ghost outline (more wobbly than normal)
-  ctx.beginPath();
-  const points = 32;
-  const wobbleAmt = 0.04;
-  for (let i = 0; i <= points; i++) {
-    const a = (i / points) * Math.PI * 2;
-    const w = 1 + Math.sin(a * 3 + time * 2) * wobbleAmt
-                + Math.sin(a * 5 + time * 3) * wobbleAmt * 0.7;
-    const px = Math.cos(a) * r * w;
-    const py = Math.sin(a) * r * w;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.fill();
-
-  // Dashed ghostly stroke
+  // Dashed ghostly ink stroke
   ctx.setLineDash([4, 4]);
-  ctx.strokeStyle = hexWithAlpha(style.stroke, 0.6);
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  ctx.strokeStyle = hexWithAlpha(INK, 0.7);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = outlineWidth(r) * 0.8;
+  ctx.stroke(ghostPath);
   ctx.setLineDash([]);
 
-  // Highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.beginPath();
-  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.35, r * 0.18, -0.5, 0, Math.PI * 2);
-  ctx.fill();
+  drawShineTicks(r, body.id);
 
   ctx.restore();
 }
@@ -699,48 +664,77 @@ function pseudoRand(seed) {
   return x - Math.floor(x);
 }
 
-// ── Solid Ball (fruit-themed) ───────────────────────────────────
-function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
-  // Outer glow
-  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.4);
-  glow.addColorStop(0, hexWithAlpha(fill, 0.25));
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 1.4, 0, Math.PI * 2);
-  ctx.fill();
+// Uniform ink linework: thin on small fruits, capped so the biggest
+// don't turn into coloring-book blobs.
+function outlineWidth(r) {
+  return Math.min(5, Math.max(2.5, r * 0.11));
+}
 
-  // Main body gradient (3D sphere look)
-  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
-  grad.addColorStop(0, lightenColor(fill, 60));
-  grad.addColorStop(0.3, lightenColor(fill, 20));
-  grad.addColorStop(0.6, fill);
-  grad.addColorStop(1, darkenColor(fill, 40));
-  ctx.fillStyle = grad;
-
-  // Wobbly circle
-  ctx.beginPath();
+// Wobbly hand-drawn circle as a reusable Path2D (body, tint patch,
+// dragonfruit all share it). Time is quantized to ~8 fps steps so the
+// linework "boils" like traditional animation instead of swimming.
+function wobblyCirclePath(cx, cy, radius, seed, wobbleAmt = 0.02) {
+  const path = new Path2D();
   const points = 32;
-  const wobbleSpeed = 0.003;
-  const wobbleAmt = 0.012 + tierIndex * 0.001;
+  const t = Math.floor(performance.now() / 125) * 0.15;
+  const phase = pseudoRand(seed) * Math.PI * 2;
   for (let i = 0; i <= points; i++) {
     const a = (i / points) * Math.PI * 2;
-    const w = 1 + Math.sin(a * 3 + performance.now() * wobbleSpeed) * wobbleAmt
-                + Math.sin(a * 5 + performance.now() * wobbleSpeed * 1.7) * wobbleAmt * 0.5;
-    const px = Math.cos(a) * r * w;
-    const py = Math.sin(a) * r * w;
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
+    const w = 1 + Math.sin(a * 3 + t + phase) * wobbleAmt
+                + Math.sin(a * 5 + t * 1.7 + phase * 2) * wobbleAmt * 0.5;
+    const px = cx + Math.cos(a) * radius * w;
+    const py = cy + Math.sin(a) * radius * w;
+    if (i === 0) path.moveTo(px, py);
+    else path.lineTo(px, py);
   }
-  ctx.closePath();
-  ctx.fill();
+  path.closePath();
+  return path;
+}
 
-  // Stroke with slight variation
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 2;
+// Flat comic-style shine: a curved white tick following the rim plus a
+// dot beside it, jittered per ball so no two fruits gleam identically.
+function drawShineTicks(r, ballId) {
+  const hl = ballId != null ? getBallHighlights(ballId)
+    : { primaryX: -0.2, primaryY: -0.28, primaryAngle: -0.5 };
+  const a0 = Math.atan2(hl.primaryY, hl.primaryX) + hl.primaryAngle * 0.2;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = outlineWidth(r) * 0.8;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.68, a0 - 0.35, a0 + 0.25);
   ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  const da = a0 + 0.55;
+  ctx.beginPath();
+  ctx.arc(Math.cos(da) * r * 0.66, Math.sin(da) * r * 0.66, outlineWidth(r) * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
-  // Skin texture goes under the gloss so highlights read on top.
+// ── Solid Ball (fruit-themed) ───────────────────────────────────
+// Flat sticker-art doodle: flat fill, offset lighter tint patch as the
+// only shading, then details tucked under a uniform ink outline.
+function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
+  const seed = ballId != null ? ballId : 7;
+  const wobbleAmt = 0.02 + tierIndex * 0.0012;
+  const body = wobblyCirclePath(0, 0, r, seed, wobbleAmt);
+
+  // Flat fill — no gradients anywhere in this style
+  ctx.fillStyle = fill;
+  ctx.fill(body);
+
+  // Offset tint patch — the misregistered-print shading from the
+  // reference art: a lighter wobbly blob pushed up-left, clipped inside
+  const ox = -r * (0.24 + pseudoRand(seed * 3) * 0.1);
+  const oy = -r * (0.26 + pseudoRand(seed * 5) * 0.1);
+  ctx.save();
+  ctx.clip(body);
+  ctx.fillStyle = lightenColor(fill, 32);
+  ctx.fill(wobblyCirclePath(ox, oy, r * 0.78, seed + 11, 0.05));
+  ctx.restore();
+
+  // Skin texture goes under the outline so pores/stripes tuck beneath it.
   // Non-fruit skins swap the stems/stripes for their own detail pass.
   const detailMode = Skins.getDetailMode();
   if (detailMode === 'fruit') {
@@ -749,31 +743,13 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
     drawCandyGloss(r);
   }
 
-  // Per-ball randomized highlights
-  const hl = ballId != null ? getBallHighlights(ballId) : {
-    primaryX: -0.2, primaryY: -0.28, primaryW: 0.4, primaryH: 0.22,
-    primaryAngle: -0.5, primaryAlpha: 0.25,
-    dotX: -0.15, dotY: -0.42, dotSize: 0.08, dotAlpha: 0.5,
-    shadowX: 0.05, shadowY: 0.35, shadowAngle: 0.2,
-  };
+  // Uniform ink outline
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = outlineWidth(r);
+  ctx.stroke(body);
 
-  // Primary highlight (big soft reflection)
-  ctx.fillStyle = `rgba(255,255,255,${hl.primaryAlpha})`;
-  ctx.beginPath();
-  ctx.ellipse(r * hl.primaryX, r * hl.primaryY, r * hl.primaryW, r * hl.primaryH, hl.primaryAngle, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Secondary highlight (sharp tiny dot)
-  ctx.fillStyle = `rgba(255,255,255,${hl.dotAlpha})`;
-  ctx.beginPath();
-  ctx.arc(r * hl.dotX, r * hl.dotY, r * hl.dotSize, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Bottom shadow crescent
-  ctx.fillStyle = 'rgba(0,0,0,0.08)';
-  ctx.beginPath();
-  ctx.ellipse(r * hl.shadowX, r * hl.shadowY, r * 0.5, r * 0.18, hl.shadowAngle, 0, Math.PI * 2);
-  ctx.fill();
+  drawShineTicks(r, ballId);
 
   // Stems, leaves, and crowns sit on top (and may poke past the edge)
   if (detailMode === 'fruit') {
@@ -819,47 +795,29 @@ function drawFruitSkin(tierIndex, r, ballId) {
 
   switch (name) {
     case 'coconut': {
-      // Rough husk: long matted fibre strands, dark and sun-bleached
+      // Sparse husk hatching — a few short curved ink strokes
+      ctx.strokeStyle = hexWithAlpha(INK, 0.35);
       ctx.lineCap = 'round';
-      for (let i = 0; i < 12; i++) {
+      ctx.lineWidth = r * 0.05;
+      for (let i = 0; i < 6; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
-        const d = (0.2 + pseudoRand(seed + i * 5) * 0.65) * r;
+        const d = (0.2 + pseudoRand(seed + i * 5) * 0.6) * r;
         const x = Math.cos(a) * d;
         const y = Math.sin(a) * d;
-        const len = r * (0.14 + pseudoRand(seed + i * 7) * 0.2);
+        const len = r * (0.16 + pseudoRand(seed + i * 7) * 0.18);
         const tilt = pseudoRand(seed + i * 11) * Math.PI;
-        ctx.strokeStyle = i % 3 === 0
-          ? 'rgba(205, 165, 115, 0.25)'
-          : 'rgba(48, 28, 12, 0.30)';
-        ctx.lineWidth = r * (0.03 + pseudoRand(seed + i * 13) * 0.03);
         ctx.beginPath();
         ctx.moveTo(x - Math.cos(tilt) * len, y - Math.sin(tilt) * len);
-        ctx.lineTo(x + Math.cos(tilt) * len, y + Math.sin(tilt) * len);
+        ctx.quadraticCurveTo(x + Math.sin(tilt) * len * 0.4, y - Math.cos(tilt) * len * 0.4,
+                             x + Math.cos(tilt) * len, y + Math.sin(tilt) * len);
         ctx.stroke();
-      }
-      // Patchy darker husk blotches
-      ctx.fillStyle = 'rgba(58, 36, 15, 0.18)';
-      for (let i = 0; i < 3; i++) {
-        const a = pseudoRand(seed + 60 + i * 9) * Math.PI * 2;
-        const d = (0.25 + pseudoRand(seed + 70 + i * 9) * 0.5) * r;
-        ctx.beginPath();
-        ctx.ellipse(Math.cos(a) * d, Math.sin(a) * d,
-                    r * 0.3, r * 0.18, a, 0, Math.PI * 2);
-        ctx.fill();
       }
       break;
     }
     case 'cherry': {
-      // Deep red blush on one cheek + faint suture crease
-      const blush = ctx.createRadialGradient(r * 0.3, r * 0.2, r * 0.05, r * 0.2, r * 0.1, r * 0.9);
-      blush.addColorStop(0, 'rgba(120, 10, 30, 0.30)');
-      blush.addColorStop(1, 'rgba(120, 10, 30, 0)');
-      ctx.fillStyle = blush;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(110, 10, 25, 0.35)';
-      ctx.lineWidth = r * 0.05;
+      // Suture crease — a single ink line down the cheek
+      ctx.strokeStyle = hexWithAlpha(INK, 0.4);
+      ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(r * 0.05, -r * 0.9);
@@ -868,59 +826,36 @@ function drawFruitSkin(tierIndex, r, ballId) {
       break;
     }
     case 'lemon': {
-      // Dimpled peel — a dark pore with a light rim reads as texture
-      for (let i = 0; i < 16; i++) {
+      // Dimpled peel — plain ink pore dots
+      ctx.fillStyle = hexWithAlpha(INK, 0.55);
+      for (let i = 0; i < 8; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
-        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.88;
-        const x = Math.cos(a) * d;
-        const y = Math.sin(a) * d;
-        const pr = r * (0.025 + pseudoRand(seed + i * 7) * 0.02);
-        ctx.fillStyle = 'rgba(170, 135, 10, 0.25)';
+        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.85;
         ctx.beginPath();
-        ctx.arc(x, y, pr, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255, 246, 180, 0.20)';
-        ctx.beginPath();
-        ctx.arc(x - pr * 0.5, y - pr * 0.5, pr * 0.6, 0, Math.PI * 2);
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.035, 0, Math.PI * 2);
         ctx.fill();
       }
-      // Faint green blush near the stem end
-      const blush = ctx.createRadialGradient(0, -r * 0.75, r * 0.05, 0, -r * 0.75, r * 0.55);
-      blush.addColorStop(0, 'rgba(160, 190, 60, 0.22)');
-      blush.addColorStop(1, 'rgba(160, 190, 60, 0)');
-      ctx.fillStyle = blush;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
       break;
     }
     case 'orange': {
-      // Peel pores, varied in size like real rind
-      for (let i = 0; i < 18; i++) {
+      // Rind pores — ink dots, varied in size
+      ctx.fillStyle = hexWithAlpha(INK, 0.45);
+      for (let i = 0; i < 10; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.85;
-        ctx.fillStyle = `rgba(150, 75, 0, ${0.16 + pseudoRand(seed + i * 11) * 0.12})`;
         ctx.beginPath();
         ctx.arc(Math.cos(a) * d, Math.sin(a) * d,
-                r * (0.022 + pseudoRand(seed + i * 7) * 0.022), 0, Math.PI * 2);
+                r * (0.025 + pseudoRand(seed + i * 7) * 0.02), 0, Math.PI * 2);
         ctx.fill();
       }
-      // Pith shading pooled around the stem
-      const stemShade = ctx.createRadialGradient(0, -r * 0.85, r * 0.02, 0, -r * 0.85, r * 0.32);
-      stemShade.addColorStop(0, 'rgba(140, 70, 0, 0.25)');
-      stemShade.addColorStop(1, 'rgba(140, 70, 0, 0)');
-      ctx.fillStyle = stemShade;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
       break;
     }
     case 'watermelon': {
-      // Dark wavy rind stripes converging at the poles
-      ctx.strokeStyle = 'rgba(20, 105, 55, 0.85)';
+      // Dark wavy rind stripes converging at the poles — flat solid
+      ctx.strokeStyle = '#14503a';
       ctx.lineCap = 'round';
       for (const lon of [-0.62, -0.21, 0.21, 0.62]) {
-        ctx.lineWidth = r * (0.13 - Math.abs(lon) * 0.05);
+        ctx.lineWidth = r * (0.15 - Math.abs(lon) * 0.05);
         ctx.beginPath();
         const steps = 14;
         for (let s = 0; s <= steps; s++) {
@@ -934,66 +869,53 @@ function drawFruitSkin(tierIndex, r, ballId) {
         }
         ctx.stroke();
       }
-      // Pale mottled streaks on the light bands between stripes
-      ctx.strokeStyle = 'rgba(215, 245, 210, 0.16)';
-      ctx.lineWidth = r * 0.03;
-      for (const lon of [-0.42, 0, 0.42]) {
-        for (let s = 0; s < 3; s++) {
-          const t0 = -0.7 + pseudoRand(seed + (lon + 1) * 91 + s * 7) * 1.2;
-          const bulge = Math.sqrt(Math.max(1 - t0 * t0, 0));
-          ctx.beginPath();
-          ctx.moveTo(lon * r * 1.35 * bulge, t0 * r * 0.96);
-          ctx.lineTo(lon * r * 1.3 * bulge, (t0 + 0.16) * r * 0.96);
-          ctx.stroke();
-        }
+      // Ink teardrop seeds scattered on the light bands
+      ctx.fillStyle = hexWithAlpha(INK, 0.85);
+      const seedLons = [-0.42, 0, 0, 0.42];
+      for (let i = 0; i < 4; i++) {
+        const t0 = -0.55 + pseudoRand(seed + i * 17) * 1.1;
+        const bulge = Math.sqrt(Math.max(1 - t0 * t0, 0));
+        ctx.save();
+        ctx.translate(seedLons[i] * r * 1.35 * bulge, t0 * r * 0.96);
+        ctx.rotate(pseudoRand(seed + i * 23) * Math.PI);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 0.03, r * 0.05, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
       break;
     }
     case 'blueberry': {
-      // Dusty "bloom" — the pale frost real blueberries have
-      const bloom = ctx.createRadialGradient(-r * 0.25, -r * 0.2, r * 0.1, -r * 0.1, 0, r * 1.05);
-      bloom.addColorStop(0, 'rgba(210, 225, 250, 0.30)');
-      bloom.addColorStop(0.55, 'rgba(210, 225, 250, 0.10)');
-      bloom.addColorStop(1, 'rgba(210, 225, 250, 0)');
-      ctx.fillStyle = bloom;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-      // Tiny pale speckles under the bloom
-      ctx.fillStyle = 'rgba(225, 235, 255, 0.13)';
-      for (let i = 0; i < 7; i++) {
+      // A few flat pale bloom dots (the tint patch is the frost)
+      ctx.fillStyle = 'rgba(220, 232, 255, 0.5)';
+      for (let i = 0; i < 3; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
-        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.8;
+        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.7;
         ctx.beginPath();
-        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.03, 0, Math.PI * 2);
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.045, 0, Math.PI * 2);
         ctx.fill();
       }
       break;
     }
     case 'grape': {
-      // Waxy bloom sheen
-      const bloom = ctx.createRadialGradient(r * 0.25, -r * 0.3, r * 0.05, r * 0.15, -r * 0.15, r * 0.9);
-      bloom.addColorStop(0, 'rgba(230, 210, 250, 0.22)');
-      bloom.addColorStop(0.6, 'rgba(230, 210, 250, 0.07)');
-      bloom.addColorStop(1, 'rgba(230, 210, 250, 0)');
-      ctx.fillStyle = bloom;
+      // Thin ink crescent along the lower-right rim suggests roundness
+      ctx.strokeStyle = hexWithAlpha(INK, 0.3);
+      ctx.lineWidth = r * 0.05;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(0, 0, r * 0.8, 0.4, 1.5);
+      ctx.stroke();
       break;
     }
     case 'plum': {
-      // Warm blush on one cheek
-      const blush = ctx.createRadialGradient(r * 0.35, r * 0.15, r * 0.05, r * 0.35, r * 0.15, r * 0.75);
-      blush.addColorStop(0, 'rgba(220, 90, 110, 0.30)');
-      blush.addColorStop(1, 'rgba(220, 90, 110, 0)');
-      ctx.fillStyle = blush;
+      // Flat blush patch on one cheek
+      ctx.fillStyle = 'rgba(220, 90, 110, 0.35)';
       ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.ellipse(r * 0.35, r * 0.15, r * 0.4, r * 0.3, 0.3, 0, Math.PI * 2);
       ctx.fill();
       // Cleft crease from pole to pole
-      ctx.strokeStyle = 'rgba(90, 30, 100, 0.45)';
-      ctx.lineWidth = r * 0.05;
+      ctx.strokeStyle = hexWithAlpha(INK, 0.45);
+      ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(-r * 0.06, -r * 0.94);
@@ -1010,30 +932,24 @@ function drawFruitTopper(tierIndex, r) {
 
   switch (name) {
     case 'coconut': {
-      // The three classic coconut "eyes", sunk into the dark husk
-      ctx.fillStyle = 'rgba(38, 22, 8, 0.85)';
+      // The three classic coconut "eyes" — plain ink dots
+      ctx.fillStyle = hexWithAlpha(INK, 0.9);
       for (const e of [{ x: -0.16, y: -0.48 }, { x: 0.16, y: -0.48 }, { x: 0, y: -0.24 }]) {
         ctx.beginPath();
         ctx.ellipse(e.x * r, e.y * r, r * 0.09, r * 0.11, 0, 0, Math.PI * 2);
         ctx.fill();
-        // Lit lower rim gives each eye a recessed look
-        ctx.strokeStyle = 'rgba(200, 160, 110, 0.35)';
-        ctx.lineWidth = r * 0.025;
-        ctx.beginPath();
-        ctx.ellipse(e.x * r, e.y * r, r * 0.09, r * 0.11, 0, 0.4, Math.PI - 0.4);
-        ctx.stroke();
       }
       break;
     }
     case 'cherry': {
       // Dimple where the stem sinks into the fruit
-      ctx.fillStyle = 'rgba(90, 5, 20, 0.5)';
+      ctx.fillStyle = hexWithAlpha(INK, 0.4);
       ctx.beginPath();
       ctx.ellipse(0, -r * 0.82, r * 0.14, r * 0.07, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Curvy stem + tiny leaf
-      ctx.strokeStyle = '#7A4A21';
-      ctx.lineWidth = r * 0.11;
+      // Curvy ink stem + flat teal leaf with a center vein
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = r * 0.1;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(0, -r * 0.85);
@@ -1042,18 +958,26 @@ function drawFruitTopper(tierIndex, r) {
       ctx.save();
       ctx.translate(r * 0.5, -r * 1.34);
       ctx.rotate(0.5);
-      ctx.fillStyle = '#4CAF50';
+      ctx.fillStyle = LEAF_GREEN;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = outlineWidth(r) * 0.55;
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.22, r * 0.1, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, r * 0.22, r * 0.11, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
+      ctx.lineWidth = Math.max(0.8, r * 0.03);
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.18, 0);
+      ctx.lineTo(r * 0.18, 0);
+      ctx.stroke();
       ctx.restore();
       break;
     }
     case 'lemon': {
       // The two signature lemon nubs — stem end up top, nipple below
       ctx.fillStyle = '#DCBE2A';
-      ctx.strokeStyle = 'rgba(150, 118, 10, 0.55)';
-      ctx.lineWidth = r * 0.03;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = outlineWidth(r) * 0.6;
       ctx.beginPath();
       ctx.ellipse(0, -r * 0.97, r * 0.16, r * 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
@@ -1062,28 +986,30 @@ function drawFruitTopper(tierIndex, r) {
       ctx.ellipse(0, r * 0.97, r * 0.12, r * 0.1, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      // Woody stem dot on the top nub
-      ctx.fillStyle = '#8A6420';
+      // Ink stem dot on the top nub
+      ctx.fillStyle = INK;
       ctx.beginPath();
       ctx.ellipse(0, -r * 1.02, r * 0.05, r * 0.04, 0, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
     case 'orange': {
-      // Stem stub + glossy leaf
-      ctx.fillStyle = '#7A5230';
+      // Ink stem stub + flat teal leaf with a center vein
+      ctx.fillStyle = INK;
       ctx.beginPath();
       ctx.ellipse(0, -r * 0.93, r * 0.08, r * 0.06, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.save();
       ctx.translate(r * 0.24, -r * 0.98);
       ctx.rotate(0.35);
-      ctx.fillStyle = '#3E9B4F';
+      ctx.fillStyle = LEAF_GREEN;
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = outlineWidth(r) * 0.55;
       ctx.beginPath();
       ctx.ellipse(0, 0, r * 0.24, r * 0.11, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(30, 90, 45, 0.7)';
-      ctx.lineWidth = r * 0.02;
+      ctx.stroke();
+      ctx.lineWidth = Math.max(0.8, r * 0.03);
       ctx.beginPath();
       ctx.moveTo(-r * 0.2, 0);
       ctx.lineTo(r * 0.2, 0);
@@ -1092,9 +1018,9 @@ function drawFruitTopper(tierIndex, r) {
       break;
     }
     case 'watermelon': {
-      // Curly stem
-      ctx.strokeStyle = '#5C7A2E';
-      ctx.lineWidth = r * 0.055;
+      // Curly ink stem
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = r * 0.07;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(0, -r * 0.92);
@@ -1103,10 +1029,10 @@ function drawFruitTopper(tierIndex, r) {
       break;
     }
     case 'blueberry': {
-      // Star-shaped calyx crown
+      // Star-shaped calyx crown — solid ink
       ctx.save();
       ctx.translate(0, -r * 0.52);
-      ctx.fillStyle = 'rgba(25, 35, 90, 0.75)';
+      ctx.fillStyle = hexWithAlpha(INK, 0.9);
       ctx.beginPath();
       const spikes = 5;
       for (let i = 0; i < spikes * 2; i++) {
@@ -1116,17 +1042,13 @@ function drawFruitTopper(tierIndex, r) {
       }
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = 'rgba(15, 22, 60, 0.8)';
-      ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.055, r * 0.04, 0, 0, Math.PI * 2);
-      ctx.fill();
       ctx.restore();
       break;
     }
     case 'grape': {
-      // Woody stem nub
-      ctx.strokeStyle = '#6E4A25';
-      ctx.lineWidth = r * 0.06;
+      // Woody stem nub — ink
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = r * 0.07;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(0, -r * 0.9);
@@ -1135,9 +1057,9 @@ function drawFruitTopper(tierIndex, r) {
       break;
     }
     case 'plum': {
-      // Stem sunk into the top dimple
-      ctx.strokeStyle = '#6E4A25';
-      ctx.lineWidth = r * 0.05;
+      // Stem sunk into the top dimple — ink
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(-r * 0.06, -r * 0.88);
@@ -1150,41 +1072,25 @@ function drawFruitTopper(tierIndex, r) {
 
 // ── Dragon Fruit Ball (tier 8 — vivid pink, green-tipped scales) ─
 function drawDragonfruitBall(r) {
-  const time = performance.now() * 0.001;
+  const body = wobblyCirclePath(0, 0, r, 8, 0.022);
 
-  // Outer glow
-  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.5);
-  glow.addColorStop(0, 'rgba(232, 77, 141, 0.3)');
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 1.5, 0, Math.PI * 2);
-  ctx.fill();
+  // Flat pink body + offset tint patch, same recipe as the fruits
+  ctx.fillStyle = '#E44D8D';
+  ctx.fill(body);
+  ctx.save();
+  ctx.clip(body);
+  ctx.fillStyle = lightenColor('#E44D8D', 32);
+  ctx.fill(wobblyCirclePath(-r * 0.26, -r * 0.28, r * 0.78, 19, 0.05));
+  ctx.restore();
 
-  // Hot pink body gradient
-  const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.05, r * 0.1, r * 0.1, r * 1.1);
-  grad.addColorStop(0, '#FF9EC4');
-  grad.addColorStop(0.35, '#F0619E');
-  grad.addColorStop(0.7, '#E0407F');
-  grad.addColorStop(1, '#A82762');
-  ctx.fillStyle = grad;
+  // Uniform ink outline
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = outlineWidth(r);
+  ctx.stroke(body);
 
-  ctx.beginPath();
-  const points = 32;
-  for (let i = 0; i <= points; i++) {
-    const a = (i / points) * Math.PI * 2;
-    const w = 1 + Math.sin(a * 4 + time * 2) * 0.01;
-    ctx.lineTo(Math.cos(a) * r * w, Math.sin(a) * r * w);
-  }
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.strokeStyle = '#B03068';
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-
-  // Leathery scale flaps — pink at the base, fading to a green tip.
-  // Outer ones poke just past the silhouette like the real fruit.
+  // Leathery scale flaps — flat pink with flat green tips. Outer ones
+  // poke just past the silhouette like the real fruit.
   const scales = [
     { a: -1.95, d: 0.55, s: 1.0 },
     { a: -1.1,  d: 0.72, s: 0.85 },
@@ -1204,15 +1110,7 @@ function drawDragonfruitBall(r) {
     );
   }
 
-  // Waxy skin highlights
-  ctx.fillStyle = 'rgba(255,255,255,0.30)';
-  ctx.beginPath();
-  ctx.ellipse(-r * 0.22, -r * 0.3, r * 0.32, r * 0.16, -0.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.beginPath();
-  ctx.arc(-r * 0.14, -r * 0.42, r * 0.06, 0, Math.PI * 2);
-  ctx.fill();
+  drawShineTicks(r, 8);
 }
 
 // One curved leaf flap, pointing outward along `angle`
@@ -1220,23 +1118,29 @@ function drawDragonfruitScale(x, y, len, angle) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  const grad = ctx.createLinearGradient(-len * 0.25, 0, len, 0);
-  grad.addColorStop(0, 'rgba(255, 150, 190, 0.55)');
-  grad.addColorStop(0.55, 'rgba(240, 105, 160, 0.5)');
-  grad.addColorStop(1, 'rgba(118, 195, 108, 0.9)');
-  ctx.fillStyle = grad;
+  const flap = new Path2D();
+  flap.moveTo(-len * 0.25, 0);
+  flap.quadraticCurveTo(len * 0.3, -len * 0.38, len, 0);
+  flap.quadraticCurveTo(len * 0.3, len * 0.38, -len * 0.25, 0);
+  flap.closePath();
+  // Flat pink base with a flat green tip (outer third)
+  ctx.fillStyle = '#F27DAE';
+  ctx.fill(flap);
+  ctx.save();
+  ctx.clip(flap);
+  ctx.fillStyle = LEAF_GREEN;
+  ctx.fillRect(len * 0.55, -len * 0.4, len * 0.5, len * 0.8);
+  ctx.restore();
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(1, len * 0.08);
+  ctx.stroke(flap);
+  // Short center line, like a leaf vein
+  ctx.lineCap = 'round';
+  ctx.lineWidth = Math.max(0.8, len * 0.05);
   ctx.beginPath();
-  ctx.moveTo(-len * 0.25, 0);
-  ctx.quadraticCurveTo(len * 0.3, -len * 0.38, len, 0);
-  ctx.quadraticCurveTo(len * 0.3, len * 0.38, -len * 0.25, 0);
-  ctx.closePath();
-  ctx.fill();
-  // Crisp edge on the green tip so it reads at small sizes
-  ctx.strokeStyle = 'rgba(90, 160, 85, 0.45)';
-  ctx.lineWidth = len * 0.06;
-  ctx.beginPath();
-  ctx.moveTo(len * 0.55, -len * 0.16);
-  ctx.quadraticCurveTo(len * 0.85, 0, len * 0.55, len * 0.16);
+  ctx.moveTo(-len * 0.1, 0);
+  ctx.lineTo(len * 0.5, 0);
   ctx.stroke();
   ctx.restore();
 }
@@ -1245,41 +1149,25 @@ function drawDragonfruitScale(x, y, len, angle) {
 function drawRainbowBall(r) {
   const time = performance.now() * 0.001;
 
-  // Grand outer glow
-  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 2);
-  const hue = (time * 60) % 360;
-  glow.addColorStop(0, `hsla(${hue}, 80%, 65%, 0.3)`);
-  glow.addColorStop(0.5, `hsla(${(hue + 120) % 360}, 80%, 65%, 0.1)`);
-  glow.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 2, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Animated rainbow conic gradient
+  // Animated rainbow conic gradient — the goal fruit keeps its magic,
+  // framed in the same wobbly ink outline as everything else
   const grad = ctx.createConicGradient(time * 1.5, 0, 0);
   const colors = ['#E8394F', '#F5921E', '#F7D14E', '#2ECC71', '#5578DE', '#7D3C98', '#A569BD', '#E8394F'];
   for (let i = 0; i < colors.length; i++) {
     grad.addColorStop(i / (colors.length - 1), colors[i]);
   }
 
+  const body = wobblyCirclePath(0, 0, r, 9, 0.02);
   ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.fill();
+  ctx.fill(body);
 
-  // Shimmering white overlay
-  const shimmer = 0.15 + Math.sin(time * 4) * 0.1 + Math.sin(time * 7) * 0.05;
-  ctx.fillStyle = `rgba(255,255,255,${shimmer})`;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Rotating star highlight
+  // Rotating star — flat white with a thin ink outline
   ctx.save();
   ctx.rotate(time * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
@@ -1291,20 +1179,16 @@ function drawRainbowBall(r) {
   }
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
   ctx.restore();
 
-  // Main highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.beginPath();
-  ctx.ellipse(-r * 0.2, -r * 0.28, r * 0.4, r * 0.25, -0.5, 0, Math.PI * 2);
-  ctx.fill();
+  // Ink rim
+  ctx.strokeStyle = INK;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = outlineWidth(r);
+  ctx.stroke(body);
 
-  // Stroke
-  ctx.strokeStyle = `hsla(${hue}, 70%, 75%, 0.6)`;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.stroke();
+  drawShineTicks(r, 9);
 }
 
 // ── Preview Ball ────────────────────────────────────────────────

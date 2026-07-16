@@ -52,6 +52,17 @@ export function isMuted() {
   return muted;
 }
 
+// Shared context/output for the music module — routing music through
+// masterGain means the mute toggle silences it for free.
+export function getContext() {
+  return ensureContext();
+}
+
+export function getMasterGain() {
+  ensureContext();
+  return masterGain;
+}
+
 // ── Drop sound: soft thud + tiny chirp ──────────────────────────
 export function playDrop(tierIndex) {
   const ctx = ensureContext();

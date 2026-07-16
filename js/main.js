@@ -12,6 +12,7 @@ import * as Input from './input.js';
 import * as Score from './score.js';
 import * as Particles from './particles.js';
 import * as Audio from './audio.js';
+import * as Music from './music.js';
 import * as Store from './store.js';
 import * as Save from './save.js';
 import * as Menus from './menus.js';
@@ -409,6 +410,11 @@ function loop(timestamp) {
       checkNewUnlocks();
     }
 
+    // Music tempo tracks run intensity: combo streaks lift it, fever
+    // pins it high (a modest lift — the groove quickens, not panics)
+    Music.setIntensity(Math.min(1,
+      Score.combo / 6 + (Fever.isActive() ? 0.5 : Fever.getMeter() * 0.25)));
+
     // Fever meter tick + start/end transitions
     const feverEvents = Fever.update(delta);
     if (feverEvents.started) {
@@ -555,6 +561,7 @@ function endRun(wonRun, reason) {
   lastTickedCoins = 0;
   Audio.setFeverActive(false);
   Particles.setFeverActive(false);
+  Music.stop(1.2);
   if (wonRun) {
     Audio.playWin();
     Input.hapticWin();
@@ -596,6 +603,8 @@ function startGame(modeId) {
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
   coinsEarned = 0;
+  // Called from a click/touch handler, so the AudioContext can start
+  Music.start();
 }
 
 function returnToMenu() {
@@ -604,6 +613,7 @@ function returnToMenu() {
   Store.reset();
   Physics.resetCup();
   Audio.stopDangerHum();
+  Music.stop(0.5);
   gameState = 'menu';
 }
 

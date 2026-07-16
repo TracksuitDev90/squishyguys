@@ -26,6 +26,11 @@ export const BALL_RESTITUTION = 0.3;
 export const BALL_FRICTION = 0.05;
 export const BALL_DENSITY = 0.002;
 
+// Hand-drawn doodle style — every outline uses the same dark-navy ink,
+// and leaves share one flat teal green (matches the sticker-art look).
+export const INK = '#1e2f4f';
+export const LEAF_GREEN = '#3aa98f';
+
 // Ball tiers — index 0 is smallest. Every squishy ball is a fruit
 // (except rainbow, which stays special).
 // Merge rule: 2 of same → 1 of next tier
