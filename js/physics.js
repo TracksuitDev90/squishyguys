@@ -137,8 +137,8 @@ export function createBallBody(x, y, tierIndex) {
   const tier = BALL_TIERS[tierIndex];
 
   // Smaller balls are bouncier and squishier, larger balls feel heavier/fluid
-  // Bounce: coconut=0.55, gradually decreasing to 0.1 for the biggest balls
-  const restitution = Math.max(0.1, 0.55 - tierIndex * 0.06);
+  // Bounce: coconut=0.6, gradually decreasing to 0.11 for the biggest balls
+  const restitution = Math.max(0.11, 0.60 - tierIndex * 0.06);
   // Friction: smaller balls slide more easily between others
   let friction = BALL_FRICTION;
   if (tierIndex <= 3) {
