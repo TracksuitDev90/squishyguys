@@ -2,7 +2,7 @@
 // Manages all visual effects: sparkles, shockwaves, confetti,
 // floating score text, spawn pops, and screen shake.
 
-import { BALL_TIERS } from './config.js';
+import { BALL_TIERS, RAINBOW_TIER } from './config.js';
 import * as Skins from './skins.js';
 
 // ── Active effect pools ─────────────────────────────────────────
@@ -23,7 +23,7 @@ export function emitMerge(x, y, tierIndex, comboCount) {
   const style = Skins.getTierStyle(tierIndex);
   const color = style.color === 'rainbow' ? '#FFD700' : style.color;
   const r = tier.radius;
-  const intensity = Math.min(tierIndex / 9, 1); // higher tiers = more juice
+  const intensity = Math.min(tierIndex / RAINBOW_TIER, 1); // higher tiers = more juice
 
   // Scale factor: low tiers are subtle (0.3), high tiers are big (1.0+)
   const juiceFactor = 0.3 + intensity * 0.9;
@@ -120,7 +120,7 @@ export function emitMerge(x, y, tierIndex, comboCount) {
   }
 
   // Rainbow merge: extra spectacular
-  if (tierIndex === 9) {
+  if (tierIndex === RAINBOW_TIER) {
     for (let wave = 0; wave < 3; wave++) {
       setTimeout(() => {
         shockwaves.push({
@@ -186,7 +186,9 @@ export function emitUnlockFlash(tierIndex) {
     name: tier.name.toUpperCase(),
     color: style.color === 'rainbow' ? '#FFD700' : style.color,
     life: 1,
-    decay: 0.008,
+    // Unlocking a new fruit is a milestone — the banner lingers 10%
+    // longer than the base 0.008 decay so the moment can land.
+    decay: 0.008 / 1.1,
   });
 }
 

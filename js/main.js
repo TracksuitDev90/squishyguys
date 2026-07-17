@@ -1,7 +1,7 @@
 // ── Squishy Fruit — Main Game Loop ──────────────────────────────
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
-  BALL_TIERS, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
+  BALL_TIERS, RAINBOW_TIER, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
   COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
   ZEN_COIN_SCALE, ZEN_COIN_CAP,
 } from './config.js';
@@ -34,6 +34,12 @@ let coinsEarned = 0; // coins awarded for the run that just ended
 let gameoverAt = 0; // drives restart guard + coin count-up ceremony
 let gameoverReason = 'danger'; // 'danger' | 'time' | 'rainbow'
 let rushTimeLeftMs = 0;
+
+// Store tooltips — touch shows one on first tap and buys on the next
+// tap while it's still up; desktop shows them on plain hover.
+const TOUCH_TOOLTIP_MS = 3500;
+let touchTooltipId = null;
+let touchTooltipAt = 0;
 
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
@@ -222,6 +228,19 @@ function checkUIHit(x, y) {
     case 'playing': {
       const storeHit = Renderer.checkStoreButtonHit(x, y);
       if (storeHit) {
+        // Always consume taps on a store button — a failed purchase
+        // must never fall through and drop a fruit
+        Input.state.uiConsumed = true;
+
+        // Touch has no hover: the first tap opens the tooltip so the
+        // player knows what they're buying; the next tap confirms.
+        if (Input.getIsTouchDevice() && touchTooltipId !== storeHit) {
+          touchTooltipId = storeHit;
+          touchTooltipAt = performance.now();
+          Audio.playDrop(1);
+          return true;
+        }
+
         const result = Store.purchase(storeHit, Score.current);
         if (result.success) {
           Score.spend(result.cost);
@@ -232,9 +251,9 @@ function checkUIHit(x, y) {
           // colorBomb just queues the bomb for next drop (handled in drop logic)
 
           Audio.playMerge(5, 1); // satisfying purchase sound
-          Input.state.uiConsumed = true;
-          return true;
+          touchTooltipId = null;
         }
+        return true;
       }
       return false;
     }
@@ -365,7 +384,8 @@ function loop(timestamp) {
           activeGhost.body.position.y,
           activeGhost.tierIndex
         );
-      } else if (now - lastDropTime >= DROP_COOLDOWN_MS * Fever.getCooldownScale()) {
+      } else if (now - lastDropTime >=
+                 (modeCfg.dropCooldownMs || DROP_COOLDOWN_MS) * Fever.getCooldownScale()) {
         if (Store.isBombQueued()) {
           // Drop a bomb ball instead of normal
           Balls.spawnBombBall(Input.state.pointerX);
@@ -452,7 +472,7 @@ function loop(timestamp) {
         const rb = Balls.consumeRainbow();
         if (rb) {
           Score.addPoints(500);
-          Particles.emitMerge(rb.x, rb.y, 9, 5);
+          Particles.emitMerge(rb.x, rb.y, RAINBOW_TIER, 5);
           Particles.emitScorePopup(rb.x, rb.y, 500, 1);
           Audio.playWin();
           Input.hapticWin();
@@ -462,7 +482,7 @@ function loop(timestamp) {
         endRun(true, 'rainbow');
 
         // Big celebration particles
-        Particles.emitMerge(GAME_WIDTH / 2, GAME_HEIGHT / 2, 9, 5);
+        Particles.emitMerge(GAME_WIDTH / 2, GAME_HEIGHT / 2, RAINBOW_TIER, 5);
       }
     } else if (modeCfg.danger && Balls.checkGameOver(getEffectiveDangerY())) {
       endRun(false, 'danger');
@@ -490,6 +510,22 @@ function loop(timestamp) {
   // Cleanup squish states for removed balls
   const activeIds = new Set(Balls.getAll().keys());
   Renderer.cleanupSquishStates(activeIds);
+
+  // Store tooltip: hover-driven on desktop, tap-driven (with expiry)
+  // on touch — see checkUIHit's playing case for the touch flow.
+  let storeTooltip = null;
+  let storeTooltipHint = false;
+  if (gameState === 'playing') {
+    if (Input.getIsTouchDevice()) {
+      if (touchTooltipId && performance.now() - touchTooltipAt > TOUCH_TOOLTIP_MS) {
+        touchTooltipId = null;
+      }
+      storeTooltip = touchTooltipId;
+      storeTooltipHint = !!touchTooltipId;
+    } else {
+      storeTooltip = Renderer.checkStoreButtonHit(Input.state.hoverX, Input.state.hoverY);
+    }
+  }
 
   // Render
   Renderer.render({
@@ -530,6 +566,8 @@ function loop(timestamp) {
       cupExtend: Store.canAfford('cupExtend', Score.current),
       ghostBall: Store.canAfford('ghostBall', Score.current),
     },
+    storeTooltip,
+    storeTooltipHint,
   });
 }
 
@@ -575,6 +613,7 @@ function endRun(wonRun, reason) {
 
 function startGame(modeId) {
   currentMode = modeId;
+  Score.setMode(modeId); // before Score.reset so it loads this mode's records
   Balls.reset();
   Score.reset();
   Particles.reset();
@@ -603,6 +642,7 @@ function startGame(modeId) {
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
   coinsEarned = 0;
+  touchTooltipId = null;
   // Called from a click/touch handler, so the AudioContext can start
   Music.start();
 }

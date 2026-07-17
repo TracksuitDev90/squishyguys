@@ -34,33 +34,41 @@ export const LEAF_GREEN = '#3aa98f';
 // Ball tiers — index 0 is smallest. Every squishy ball is a fruit
 // (except rainbow, which stays special).
 // Merge rule: 2 of same → 1 of next tier
+// Radii step up evenly so every fruit reads at a glance; the apple
+// gets a deliberate size jump over the peach so it lands "slightly
+// bigger" than its neighbors below.
 export const BALL_TIERS = [
-  { name: 'coconut',     radius: 12, color: '#8B5A33', stroke: '#5C3A1E', points: 1  },
-  { name: 'cherry',      radius: 17, color: '#E8394F', stroke: '#B02439', points: 3  },
-  { name: 'lemon',       radius: 22, color: '#F4D735', stroke: '#C0A312', points: 6  },
-  { name: 'orange',      radius: 28, color: '#F5921E', stroke: '#C96F10', points: 10 },
-  { name: 'watermelon',  radius: 35, color: '#2ECC71', stroke: '#1E8449', points: 15 },
-  { name: 'blueberry',   radius: 42, color: '#5578DE', stroke: '#3A55AD', points: 21 },
-  { name: 'grape',       radius: 50, color: '#7D3C98', stroke: '#5B2C6F', points: 28 },
-  { name: 'plum',        radius: 59, color: '#A569BD', stroke: '#8E44AD', points: 36 },
-  { name: 'dragonfruit', radius: 69, color: '#E44D8D', stroke: '#B03068', points: 45 },
-  { name: 'rainbow',     radius: 79, color: 'rainbow', stroke: '#888888', points: 100 },
+  { name: 'coconut',     radius: 12, color: '#8B5A33', stroke: '#5C3A1E', points: 1   },
+  { name: 'peach',       radius: 16, color: '#FFA07A', stroke: '#D9704C', points: 3   },
+  { name: 'apple',       radius: 21, color: '#E8394F', stroke: '#B02439', points: 6   },
+  { name: 'lemon',       radius: 26, color: '#F4D735', stroke: '#C0A312', points: 10  },
+  { name: 'orange',      radius: 31, color: '#F5921E', stroke: '#C96F10', points: 15  },
+  { name: 'watermelon',  radius: 37, color: '#2ECC71', stroke: '#1E8449', points: 21  },
+  { name: 'blueberry',   radius: 44, color: '#5578DE', stroke: '#3A55AD', points: 28  },
+  { name: 'grape',       radius: 52, color: '#7D3C98', stroke: '#5B2C6F', points: 36  },
+  { name: 'plum',        radius: 61, color: '#A569BD', stroke: '#8E44AD', points: 45  },
+  { name: 'dragonfruit', radius: 70, color: '#E44D8D', stroke: '#B03068', points: 55  },
+  { name: 'rainbow',     radius: 79, color: 'rainbow', stroke: '#888888', points: 110 },
 ];
 
+// Index of the final (rainbow) tier — shared so no module hardcodes it.
+export const RAINBOW_TIER = BALL_TIERS.length - 1;
+
 // Game modes. `danger` off means the run can't end by overflow (zen);
-// `timeLimitMs` set means the run ends when the clock runs out (rush).
+// `timeLimitMs` set means the run ends when the clock runs out (rush);
+// `dropCooldownMs` overrides DROP_COOLDOWN_MS (zen allows rapid taps).
 export const MODES = {
   classic: {
     id: 'classic', label: 'CLASSIC', desc: 'fill the cup, chase the rainbow',
-    timeLimitMs: null, danger: true,
+    timeLimitMs: null, danger: true, dropCooldownMs: null,
   },
   rush: {
     id: 'rush', label: 'TIMED RUSH', desc: '2 minutes on the clock — go!',
-    timeLimitMs: 120000, danger: true,
+    timeLimitMs: 120000, danger: true, dropCooldownMs: null,
   },
   zen: {
     id: 'zen', label: 'ZEN', desc: 'no game over, just squish',
-    timeLimitMs: null, danger: false,
+    timeLimitMs: null, danger: false, dropCooldownMs: 160,
   },
 };
 
@@ -87,8 +95,8 @@ export const FEVER_COOLDOWN_SCALE = 0.5;    // drop cooldown scale while active
 
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
 // Higher tiers drop less frequently.
-export const DROP_WEIGHTS = [46, 28, 15, 8, 3];
+export const DROP_WEIGHTS = [40, 25, 16, 10, 6, 3];
 
-// Maximum tier that can ever appear as a drop (watermelon = 4).
+// Maximum tier that can ever appear as a drop (watermelon = 5).
 // Everything larger must be earned through merging.
-export const MAX_DROP_TIER = 4;
+export const MAX_DROP_TIER = 5;

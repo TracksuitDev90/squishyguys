@@ -10,8 +10,9 @@ let pitchMult = 1;
 
 // Note frequencies for merge sounds (descending — bigger balls = deeper pitch)
 const MERGE_NOTES = [
-  659.25, // E5 - coconut→cherry (smallest, highest pitch)
-  587.33, // D5 - cherry→lemon
+  698.46, // F5 - coconut→peach (smallest, highest pitch)
+  659.25, // E5 - peach→apple
+  587.33, // D5 - apple→lemon
   523.25, // C5 - lemon→orange
   493.88, // B4 - orange→watermelon
   440.00, // A4 - watermelon→blueberry
@@ -165,8 +166,8 @@ export function playMerge(tierIndex, comboCount) {
     shimmer.stop(now + 0.4);
   }
 
-  // Rainbow: major chord fanfare
-  if (tierIndex === 9) {
+  // Rainbow: major chord fanfare (last note in the scale)
+  if (tierIndex === MERGE_NOTES.length - 1) {
     const chord = [1, 1.25, 1.5, 2]; // root, major 3rd, 5th, octave
     chord.forEach((ratio, i) => {
       const delay = 0.1 + i * 0.12;

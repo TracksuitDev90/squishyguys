@@ -8,6 +8,7 @@ import {
 import * as Particles from './particles.js';
 import * as Menus from './menus.js';
 import * as Skins from './skins.js';
+import { STORE_ITEMS } from './store.js';
 
 // Store button layout — positioned in the header area, well above the cup
 const STORE_BUTTONS = [
@@ -181,6 +182,9 @@ export function render(state) {
 
   if (state.gameState === 'playing') {
     drawStoreButtons(state.storePrices, state.storeAffordable);
+    if (state.storeTooltip) {
+      drawStoreTooltip(state.storeTooltip, state.storeTooltipHint, state.storeAffordable);
+    }
   }
 
   if (state.gameState === 'gameover') {
@@ -814,15 +818,42 @@ function drawFruitSkin(tierIndex, r, ballId) {
       }
       break;
     }
-    case 'cherry': {
-      // Suture crease — a single ink line down the cheek
+    case 'peach': {
+      // Suture crease — the classic peach cleft down the cheek
       ctx.strokeStyle = hexWithAlpha(INK, 0.4);
       ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(r * 0.05, -r * 0.9);
-      ctx.quadraticCurveTo(r * 0.4, 0, r * 0.05, r * 0.9);
+      ctx.quadraticCurveTo(r * 0.42, 0, r * 0.05, r * 0.9);
       ctx.stroke();
+      // Soft pink blush on the sun-kissed side
+      ctx.fillStyle = 'rgba(240, 100, 130, 0.4)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.3, r * 0.18, r * 0.42, r * 0.32, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'apple': {
+      // Faint darker streaks arcing pole to pole, like real apple skin
+      ctx.strokeStyle = 'rgba(120, 20, 35, 0.3)';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = r * 0.055;
+      for (const lon of [-0.5, -0.15, 0.28]) {
+        ctx.beginPath();
+        ctx.moveTo(lon * r * 1.3, -r * 0.75);
+        ctx.quadraticCurveTo(lon * r * 2, 0, lon * r * 1.3, r * 0.75);
+        ctx.stroke();
+      }
+      // Pale freckle lenticels
+      ctx.fillStyle = 'rgba(255, 220, 200, 0.35)';
+      for (let i = 0; i < 6; i++) {
+        const a = pseudoRand(seed + i * 3) * Math.PI * 2;
+        const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.8;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * d, Math.sin(a) * d, r * 0.03, 0, Math.PI * 2);
+        ctx.fill();
+      }
       break;
     }
     case 'lemon': {
@@ -941,34 +972,64 @@ function drawFruitTopper(tierIndex, r) {
       }
       break;
     }
-    case 'cherry': {
-      // Dimple where the stem sinks into the fruit
+    case 'peach': {
+      // Stem dimple + short ink stem
       ctx.fillStyle = hexWithAlpha(INK, 0.4);
       ctx.beginPath();
-      ctx.ellipse(0, -r * 0.82, r * 0.14, r * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, -r * 0.84, r * 0.13, r * 0.07, 0, 0, Math.PI * 2);
       ctx.fill();
-      // Curvy ink stem + flat teal leaf with a center vein
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = r * 0.09;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.86);
+      ctx.lineTo(r * 0.06, -r * 1.1);
+      ctx.stroke();
+      // Two flat teal leaves splaying opposite ways
+      for (const side of [-1, 1]) {
+        ctx.save();
+        ctx.translate(side * r * 0.26, -r * 1.04);
+        ctx.rotate(side * 0.85);
+        ctx.fillStyle = LEAF_GREEN;
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = outlineWidth(r) * 0.5;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 0.2, r * 0.1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    }
+    case 'apple': {
+      // Deep dimple where the stem sinks into the fruit
+      ctx.fillStyle = hexWithAlpha(INK, 0.4);
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.8, r * 0.16, r * 0.08, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Sturdy curved ink stem
       ctx.strokeStyle = INK;
       ctx.lineWidth = r * 0.1;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(0, -r * 0.85);
-      ctx.quadraticCurveTo(r * 0.12, -r * 1.25, r * 0.42, -r * 1.38);
+      ctx.moveTo(0, -r * 0.82);
+      ctx.quadraticCurveTo(r * 0.03, -r * 1.05, r * 0.12, -r * 1.18);
       ctx.stroke();
+      // Flat teal leaf with a center vein
       ctx.save();
-      ctx.translate(r * 0.5, -r * 1.34);
-      ctx.rotate(0.5);
+      ctx.translate(r * 0.32, -r * 1.08);
+      ctx.rotate(0.55);
       ctx.fillStyle = LEAF_GREEN;
       ctx.strokeStyle = INK;
       ctx.lineWidth = outlineWidth(r) * 0.55;
       ctx.beginPath();
-      ctx.ellipse(0, 0, r * 0.22, r * 0.11, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, r * 0.24, r * 0.12, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.lineWidth = Math.max(0.8, r * 0.03);
       ctx.beginPath();
-      ctx.moveTo(-r * 0.18, 0);
-      ctx.lineTo(r * 0.18, 0);
+      ctx.moveTo(-r * 0.19, 0);
+      ctx.lineTo(r * 0.19, 0);
       ctx.stroke();
       ctx.restore();
       break;
@@ -1639,6 +1700,104 @@ function drawStoreButtons(prices, affordable) {
 
     ctx.restore();
   }
+}
+
+// ── Store Tooltip ───────────────────────────────────────────────
+// Explains what a power-up does before the player commits points.
+// Desktop shows it on hover; touch shows it on first tap (with a
+// "tap again to buy" hint) so nobody buys blind.
+
+function wrapText(text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawStoreTooltip(itemId, showBuyHint, affordable) {
+  const btn = STORE_BUTTONS.find(b => b.id === itemId);
+  const item = STORE_ITEMS.find(i => i.id === itemId);
+  if (!btn || !item) return;
+
+  const w = 246;
+  const pad = 12;
+  const lineH = 16;
+
+  ctx.save();
+  ctx.font = '13px "Patrick Hand", cursive';
+  const lines = wrapText(item.desc, w - pad * 2);
+  const canBuy = affordable && affordable[itemId];
+  const hint = showBuyHint
+    ? (canBuy ? 'tap again to buy' : 'not enough points yet')
+    : null;
+  const h = 30 + lines.length * lineH + (hint ? 18 : 6);
+
+  // Anchor under the button, clamped to the canvas
+  const x = Math.max(8, Math.min(GAME_WIDTH - w - 8, btn.x + btn.w / 2 - w / 2));
+  const y = btn.y + btn.h + 9;
+
+  // Little caret pointing up at the button
+  const caretX = btn.x + btn.w / 2;
+  ctx.fillStyle = 'rgba(12, 16, 34, 0.94)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(caretX - 7, y);
+  ctx.lineTo(caretX, y - 7);
+  ctx.lineTo(caretX + 7, y);
+  ctx.fill();
+
+  // Panel
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 9);
+  ctx.fill();
+  ctx.stroke();
+
+  // Re-draw the caret fill over the panel border seam
+  ctx.fillStyle = 'rgba(12, 16, 34, 0.94)';
+  ctx.beginPath();
+  ctx.moveTo(caretX - 6, y + 1);
+  ctx.lineTo(caretX, y - 5);
+  ctx.lineTo(caretX + 6, y + 1);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+  ctx.beginPath();
+  ctx.moveTo(caretX - 7, y);
+  ctx.lineTo(caretX, y - 7);
+  ctx.lineTo(caretX + 7, y);
+  ctx.stroke();
+
+  // Title
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 14px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+  ctx.fillText(`${item.icon} ${item.name}`, x + pad, y + 19);
+
+  // Description
+  ctx.font = '13px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.72)';
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x + pad, y + 37 + i * lineH);
+  });
+
+  // Touch hint
+  if (hint) {
+    ctx.font = '12px "Patrick Hand", cursive';
+    ctx.fillStyle = canBuy ? 'rgba(46, 204, 113, 0.85)' : 'rgba(255, 190, 90, 0.75)';
+    ctx.fillText(hint, x + pad, y + h - 8);
+  }
+
+  ctx.restore();
 }
 
 export function checkStoreButtonHit(x, y) {

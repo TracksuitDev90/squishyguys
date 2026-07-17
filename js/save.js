@@ -20,7 +20,8 @@ const DEFAULT_SAVE = {
   selectedSkin: 'classic',
   upgrades: { startCup: 0, discount: 0 },
   highScores: { classic: 0, rush: 0, zen: 0 },
-  bestCombo: 0,
+  bestCombo: 0, // legacy single-value combo — migrated into bestCombos
+  bestCombos: { classic: 0, rush: 0, zen: 0 },
   muted: false,
 };
 
@@ -69,6 +70,13 @@ function load() {
     } catch {
       // localStorage unavailable
     }
+    persist();
+  }
+
+  // Older saves tracked one global best combo; seed the per-mode
+  // records with it (classic was the only mode when it existed).
+  if (save.bestCombo > save.bestCombos.classic) {
+    save.bestCombos.classic = save.bestCombo;
     persist();
   }
 
@@ -159,14 +167,18 @@ export function submitScore(mode, score) {
   return isNewBest;
 }
 
-export function getBestCombo() {
-  return load().bestCombo;
+// Best combos are tracked per mode — zen runs never hit a game-over
+// screen, so its record is submitted live as each combo ends.
+export function getBestCombo(mode = 'classic') {
+  return load().bestCombos[mode] || 0;
 }
 
-export function submitBestCombo(value) {
+export function submitBestCombo(mode, value) {
   const doc = load();
-  if (value > doc.bestCombo) {
-    doc.bestCombo = value;
+  if (value > (doc.bestCombos[mode] || 0)) {
+    doc.bestCombos[mode] = value;
+    // Keep the legacy field at the all-mode max for rollback safety
+    doc.bestCombo = Math.max(doc.bestCombo, value);
     persist();
   }
 }

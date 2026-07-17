@@ -3,10 +3,12 @@
 // (plus a `detail` mode that decides whether fruit stems/stripes or a
 // generic candy gloss is drawn). Purchases spend the persistent coin
 // bank in save.js. Mirrors the store.js module style.
+// Palette order mirrors BALL_TIERS: coconut, peach, apple, lemon,
+// orange, watermelon, blueberry, grape, plum.
 import { BALL_TIERS } from './config.js';
 import * as Save from './save.js';
 
-// Palettes cover tiers 0-7; dragonfruit and rainbow (8-9) stay special
+// Palettes cover tiers 0-8; dragonfruit and rainbow (9-10) stay special
 // in every skin — they're the goal fruits.
 export const SKINS = [
   {
@@ -18,6 +20,7 @@ export const SKINS = [
     id: 'candy', name: 'CANDY SHOP', price: 300, detail: 'gloss',
     palette: [
       { color: '#FFF3E0', stroke: '#D7B894' }, // white chocolate
+      { color: '#FFB88A', stroke: '#D9824A' }, // peach ring
       { color: '#FF5CA8', stroke: '#C73580' }, // bubblegum
       { color: '#FFE066', stroke: '#D4A917' }, // lemon drop
       { color: '#FF8C42', stroke: '#CC6318' }, // orange taffy
@@ -32,6 +35,7 @@ export const SKINS = [
     id: 'neon', name: 'NEON NIGHTS', price: 600, detail: 'gloss',
     palette: [
       { color: '#E8FFF7', stroke: '#8EE8CE' },
+      { color: '#FF7E5F', stroke: '#C94F32' },
       { color: '#FF3D81', stroke: '#C4165A' },
       { color: '#F9F871', stroke: '#C9C825' },
       { color: '#FF9E1F', stroke: '#D97706' },
@@ -46,6 +50,7 @@ export const SKINS = [
     id: 'doodle', name: 'DOODLE', price: 900, detail: 'plain',
     palette: [
       { color: '#FAFAF2', stroke: '#3A3A3A' },
+      { color: '#F8E4CE', stroke: '#3A3A3A' },
       { color: '#F5D9D9', stroke: '#3A3A3A' },
       { color: '#F5EFC9', stroke: '#3A3A3A' },
       { color: '#F7DFC2', stroke: '#3A3A3A' },
