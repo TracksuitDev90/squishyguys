@@ -15,6 +15,8 @@ export const state = {
   dragStartX: 0,           // where touch started
   pointerDown: false,      // raw pointer-down state
   uiConsumed: false,       // set true when a UI element consumes the input
+  hoverX: -1,              // raw (unclamped) pointer position in game space,
+  hoverY: -1,              // -1 while the cursor is off the canvas (touch stays -1)
 };
 
 export function init(canvasEl, logicalWidth, logicalHeight) {
@@ -33,6 +35,8 @@ export function init(canvasEl, logicalWidth, logicalHeight) {
   canvas.addEventListener('mouseleave', () => {
     state.pointerActive = false;
     state.pointerDown = false;
+    state.hoverX = -1;
+    state.hoverY = -1;
   });
 
   // ── Touch events ──────────────────────────────────────────────
@@ -61,10 +65,19 @@ function toLogicalX(clientX) {
   return Math.max(CUP_LEFT_X + margin, Math.min(CUP_RIGHT_X - margin, x));
 }
 
+// Unclamped game-space coordinates — used for UI hover (tooltips),
+// which needs to reach areas outside the cup's drop range.
+function updateHover(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  state.hoverX = (clientX - rect.left) * (logicalW / rect.width);
+  state.hoverY = (clientY - rect.top) * (logicalH / rect.height);
+}
+
 // ── Mouse Handlers ──────────────────────────────────────────────
 function onMouseMove(e) {
   state.pointerX = toLogicalX(e.clientX);
   state.pointerActive = true;
+  updateHover(e.clientX, e.clientY);
 }
 
 function onMouseDown(e) {

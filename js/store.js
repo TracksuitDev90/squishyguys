@@ -1,25 +1,27 @@
 // ── Specials Store ──────────────────────────────────────────────
 // Players spend in-game points to buy power-ups.
+// The desc lines double as the in-run tooltip copy — keep them short,
+// concrete, and about what the player gets for their points.
 
 export const STORE_ITEMS = [
   {
     id: 'colorBomb',
     name: 'COLOR BOMB',
-    desc: 'Drop a bomb that merges like colors',
+    desc: 'Your next drop is a bomb: it pulls in every fruit of the first color it touches and merges them all at once.',
     basePrice: 150,
     icon: '\u25C9', // ◉
   },
   {
     id: 'cupExtend',
     name: 'CUP+',
-    desc: 'Makes the cup taller',
+    desc: 'Raises the cup walls and the danger line, giving you more room to stack before overflowing.',
     basePrice: 200,
     icon: '\u2B06', // ⬆
   },
   {
     id: 'ghostBall',
     name: 'GHOST',
-    desc: 'Drop a ghost ball that phases through others',
+    desc: 'Your next drop falls through other fruit. Tap to make it solid mid-fall, or let it settle at the bottom.',
     basePrice: 100,
     icon: '\u25C7', // ◇
   },
