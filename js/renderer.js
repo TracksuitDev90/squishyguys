@@ -10,11 +10,12 @@ import * as Menus from './menus.js';
 import * as Skins from './skins.js';
 import { STORE_ITEMS } from './store.js';
 
-// Store button layout — positioned in the header area, well above the cup
+// Store button layout — tucked up under the score/best readout
+// (BEST baseline sits at y=80) while staying clear of the drop zone
 const STORE_BUTTONS = [
-  { id: 'colorBomb', x: 30, y: 130, w: 105, h: 28 },
-  { id: 'cupExtend', x: 148, y: 130, w: 105, h: 28 },
-  { id: 'ghostBall', x: 265, y: 130, w: 105, h: 28 },
+  { id: 'colorBomb', x: 30, y: 112, w: 105, h: 28 },
+  { id: 'cupExtend', x: 148, y: 112, w: 105, h: 28 },
+  { id: 'ghostBall', x: 265, y: 112, w: 105, h: 28 },
 ];
 
 let canvas, ctx;
@@ -1839,45 +1840,86 @@ function easeOutCubicLocal(t) {
 // Pill-style chips (dark-mode take on the tag-button reference):
 // full-radius rounded pill, saturated colored border, dark tinted
 // fill, and a rounded icon chip on the left holding a little glyph.
+// `icon` is a lighter tint of the accent so the solid glyph reads
+// softly against the tinted chip instead of blazing at full saturation.
 const STORE_BTN_STYLE = {
-  colorBomb: { accent: '255, 159, 67',  label: 'BOMB'  }, // warm orange
-  cupExtend: { accent: '52, 215, 123',  label: 'CUP+'  }, // fresh green
-  ghostBall: { accent: '110, 168, 255', label: 'GHOST' }, // soft blue
+  colorBomb: { accent: '255, 159, 67',  icon: '255, 202, 150', label: 'BOMB'  }, // warm orange
+  cupExtend: { accent: '52, 215, 123',  icon: '150, 240, 194', label: 'CUP+'  }, // fresh green
+  ghostBall: { accent: '110, 168, 255', icon: '172, 206, 255', label: 'GHOST' }, // soft blue
 };
 
-function drawStoreButtonIcon(id, cx, cy, s, accentRGB, alpha) {
+function drawStoreButtonIcon(id, cx, cy, s, iconRGB, alpha) {
   ctx.save();
-  ctx.strokeStyle = `rgba(${accentRGB}, ${alpha})`;
-  ctx.fillStyle = `rgba(${accentRGB}, ${alpha})`;
-  ctx.lineWidth = 1.6;
+  ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = `rgb(${iconRGB})`;
+  ctx.fillStyle = `rgb(${iconRGB})`;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   if (id === 'colorBomb') {
-    // Target: ring + center dot
+    // Round bomb with an angled fuse cap and a spark going off
+    const bx = cx - s * 0.06;
+    const by = cy + s * 0.08;
+    const r = s * 0.3;
     ctx.beginPath();
-    ctx.arc(cx, cy, s * 0.36, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, s * 0.13, 0, Math.PI * 2);
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
     ctx.fill();
+    // Fuse cap: small rounded block on the upper-right shoulder
+    ctx.save();
+    ctx.translate(bx + r * 0.72, by - r * 0.72);
+    ctx.rotate(Math.PI / 4);
+    ctx.beginPath();
+    ctx.roundRect(-s * 0.1, -s * 0.09, s * 0.2, s * 0.13, s * 0.04);
+    ctx.fill();
+    ctx.restore();
+    // Spark rays past the cap
+    const sx = bx + r * 1.15;
+    const sy = by - r * 1.15;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(sx + s * 0.03, sy - s * 0.03);
+    ctx.lineTo(sx + s * 0.13, sy - s * 0.13);
+    ctx.moveTo(sx + s * 0.08, sy + s * 0.08);
+    ctx.lineTo(sx + s * 0.2, sy + s * 0.12);
+    ctx.moveTo(sx - s * 0.08, sy - s * 0.08);
+    ctx.lineTo(sx - s * 0.12, sy - s * 0.2);
+    ctx.stroke();
   } else if (id === 'cupExtend') {
-    // Up arrow
+    // Solid up arrow with motion dashes trailing beneath
     ctx.beginPath();
-    ctx.moveTo(cx, cy + s * 0.36);
-    ctx.lineTo(cx, cy - s * 0.3);
-    ctx.moveTo(cx - s * 0.26, cy - s * 0.04);
-    ctx.lineTo(cx, cy - s * 0.36);
-    ctx.lineTo(cx + s * 0.26, cy - s * 0.04);
-    ctx.stroke();
-  } else {
-    // Ghost diamond
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - s * 0.38);
-    ctx.lineTo(cx + s * 0.3, cy);
-    ctx.lineTo(cx, cy + s * 0.38);
-    ctx.lineTo(cx - s * 0.3, cy);
+    ctx.moveTo(cx, cy - s * 0.42);
+    ctx.lineTo(cx + s * 0.28, cy - s * 0.06);
+    ctx.lineTo(cx + s * 0.11, cy - s * 0.06);
+    ctx.lineTo(cx + s * 0.11, cy + s * 0.14);
+    ctx.lineTo(cx - s * 0.11, cy + s * 0.14);
+    ctx.lineTo(cx - s * 0.11, cy - s * 0.06);
+    ctx.lineTo(cx - s * 0.28, cy - s * 0.06);
     ctx.closePath();
-    ctx.stroke();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(cx - s * 0.18, cy + s * 0.22, s * 0.36, s * 0.055, s * 0.03);
+    ctx.roundRect(cx - s * 0.18, cy + s * 0.34, s * 0.36, s * 0.055, s * 0.03);
+    ctx.fill();
+  } else {
+    // Arcade ghost: dome top, scalloped skirt, punched-out eyes
+    const gr = s * 0.32;
+    const top = cy - s * 0.08;
+    const hem = cy + s * 0.36;
+    ctx.beginPath();
+    ctx.moveTo(cx - gr, hem);
+    ctx.lineTo(cx - gr, top);
+    ctx.arc(cx, top, gr, Math.PI, 0);
+    ctx.lineTo(cx + gr, hem);
+    ctx.lineTo(cx + gr * 0.55, hem - s * 0.12);
+    ctx.lineTo(cx, hem);
+    ctx.lineTo(cx - gr * 0.55, hem - s * 0.12);
+    ctx.closePath();
+    ctx.fill();
+    // Eyes read as cutouts against the dark chip base
+    ctx.fillStyle = 'rgba(10, 14, 30, 0.92)';
+    ctx.beginPath();
+    ctx.arc(cx - gr * 0.42, cy - s * 0.08, s * 0.075, 0, Math.PI * 2);
+    ctx.arc(cx + gr * 0.42, cy - s * 0.08, s * 0.075, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -1888,7 +1930,7 @@ function drawStoreButtons(prices, affordable) {
   for (const btn of STORE_BUTTONS) {
     const price = prices[btn.id];
     const canBuy = affordable[btn.id];
-    const { accent, label } = STORE_BTN_STYLE[btn.id];
+    const { accent, icon, label } = STORE_BTN_STYLE[btn.id];
 
     ctx.save();
 
@@ -1912,7 +1954,7 @@ function drawStoreButtons(prices, affordable) {
     ctx.fillStyle = `rgba(${accent}, ${canBuy ? 0.28 : 0.1})`;
     ctx.fill();
     drawStoreButtonIcon(btn.id, chipX + chip / 2, chipY + chip / 2,
-                        chip, accent, canBuy ? 0.95 : 0.35);
+                        chip, icon, canBuy ? 0.95 : 0.35);
 
     // Label in the accent color, like the reference pills
     ctx.font = 'bold 12px "Patrick Hand", cursive';
