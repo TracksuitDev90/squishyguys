@@ -71,6 +71,7 @@ function setup() {
       Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
       Audio.playMerge(merge.tierIndex, Score.combo);
       Input.hapticMerge(merge.tierIndex);
+      Music.bumpActivity();
 
       checkNewUnlocks();
     }
@@ -444,12 +445,14 @@ function loop(timestamp) {
       Particles.emitScorePopup(bombResult.x, bombResult.y, points, Score.combo);
       Audio.playMerge(bombResult.tier, 3);
       Input.hapticMerge(8);
+      Music.bumpActivity(0.3);
       Particles.triggerShake(12);
       checkNewUnlocks();
     }
 
     // Music tempo tracks run intensity: combo streaks lift it, fever
-    // pins it high (a modest lift — the groove quickens, not panics)
+    // pins it high, and bumpActivity() merge pings (added inside
+    // music.js) surge it during heavy merging even at low combo
     Music.setIntensity(Math.min(1,
       Score.combo / 6 + (Fever.isActive() ? 0.5 : Fever.getMeter() * 0.25)));
 
