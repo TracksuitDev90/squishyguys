@@ -226,6 +226,14 @@ function checkUIHit(x, y) {
     }
 
     case 'playing': {
+      // Zen has no game over, so it needs an explicit way out — the
+      // small exit button under the zen tag banks progress and leaves.
+      if (currentMode === 'zen' && Renderer.checkZenExitHit(x, y)) {
+        Input.state.uiConsumed = true;
+        exitZenMode();
+        return true;
+      }
+
       const storeHit = Renderer.checkStoreButtonHit(x, y);
       if (storeHit) {
         // Always consume taps on a store button — a failed purchase
@@ -288,6 +296,16 @@ function handleShopAction(hit) {
       Particles.triggerShake(4);
     }
   }
+}
+
+// Leaving zen isn't a game over — bank the high score and coin payout
+// for the session, then drop back to the menu.
+function exitZenMode() {
+  Score.saveHighScore('zen');
+  const coins = computeCoins(false, 'zen');
+  if (coins > 0) Save.addCoins(coins);
+  Audio.playDrop(2);
+  returnToMenu();
 }
 
 // ── Coin Payout ─────────────────────────────────────────────────
@@ -614,6 +632,7 @@ function endRun(wonRun, reason) {
 function startGame(modeId) {
   currentMode = modeId;
   Score.setMode(modeId); // before Score.reset so it loads this mode's records
+  Balls.setZenTiersEnabled(modeId === 'zen');
   Balls.reset();
   Score.reset();
   Particles.reset();
