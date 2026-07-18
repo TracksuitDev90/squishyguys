@@ -14,6 +14,24 @@ export const mergeEffects = [];
 // Tiers the player has unlocked (created via merge). Starts with 0-3.
 const unlockedTiers = new Set([0, 1, 2, 3]);
 
+// Zen-exclusive tiers (grapefruit) only exist while this is on; set by
+// main.js at run start. Outside zen, merge progression skips them.
+let zenTiersEnabled = false;
+
+export function setZenTiersEnabled(on) {
+  zenTiersEnabled = !!on;
+}
+
+// The tier a merge produces from `tierIndex`, skipping zen-only tiers
+// when they're disabled (classic/rush: dragonfruit → rainbow directly).
+function nextTierFrom(tierIndex) {
+  let next = tierIndex + 1;
+  while (next < BALL_TIERS.length - 1 && BALL_TIERS[next].zenOnly && !zenTiersEnabled) {
+    next++;
+  }
+  return next;
+}
+
 // ── Public API ──────────────────────────────────────────────────
 
 export function spawnBall(x, tierIndex) {
@@ -162,6 +180,20 @@ export function handleCollision(bodyA, bodyB) {
   // Rainbow can't merge further
   if (tierIndex >= BALL_TIERS.length - 1) return null;
 
+  // Zen's grapefruit needs THREE dragonfruits: when a pair touches and
+  // the next tier is zen-only, look for a third one anywhere in the cup.
+  // Without a third, the pair just squishes together and waits.
+  if (zenTiersEnabled && BALL_TIERS[tierIndex + 1] && BALL_TIERS[tierIndex + 1].zenOnly) {
+    for (const [, entry] of activeBalls) {
+      if (entry.tierIndex !== tierIndex) continue;
+      if (entry.isGhost || entry.isBomb) continue;
+      if (entry.body.isMerging) continue;
+      if (entry.body === bodyA || entry.body === bodyB) continue;
+      return performMerge([bodyA, bodyB, entry.body], tierIndex);
+    }
+    return null;
+  }
+
   return performMerge([bodyA, bodyB], tierIndex);
 }
 
@@ -271,7 +303,7 @@ export function updateBombEffect() {
       mergeEffects.push({
         x: centerX,
         y: centerY,
-        tierIndex: targetTier + 1,
+        tierIndex: nextTierFrom(targetTier),
         startTime: performance.now(),
         duration: 800,
       });
@@ -279,7 +311,7 @@ export function updateBombEffect() {
 
     const result = {
       points: totalPoints,
-      tier: targetTier + 1,
+      tier: nextTierFrom(targetTier),
       x: centerX,
       y: centerY,
     };
@@ -291,7 +323,7 @@ export function updateBombEffect() {
 }
 
 function performMerge(bodies, tierIndex) {
-  const nextTier = tierIndex + 1;
+  const nextTier = nextTierFrom(tierIndex);
   const nextTierData = BALL_TIERS[nextTier];
 
   // Mark all as merging

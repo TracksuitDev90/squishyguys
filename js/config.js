@@ -48,6 +48,10 @@ export const BALL_TIERS = [
   { name: 'grape',       radius: 52, color: '#7D3C98', stroke: '#5B2C6F', points: 36  },
   { name: 'plum',        radius: 61, color: '#A569BD', stroke: '#8E44AD', points: 45  },
   { name: 'dragonfruit', radius: 70, color: '#E44D8D', stroke: '#B03068', points: 55  },
+  // Zen-exclusive bonus tier: THREE dragonfruits merge into a sliced
+  // grapefruit (peel + cross-section). Outside zen, merge progression
+  // skips straight past it to rainbow.
+  { name: 'grapefruit',  radius: 74, color: '#FF8E62', stroke: '#D1583A', points: 75, zenOnly: true },
   { name: 'rainbow',     radius: 79, color: 'rainbow', stroke: '#888888', points: 110 },
 ];
 
