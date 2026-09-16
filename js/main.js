@@ -1,9 +1,10 @@
 // ── Squishy Fruit — Main Game Loop ──────────────────────────────
 import {
-  GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS,
+  GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS, DROP_Y, DROP_Y_MIN,
   BALL_TIERS, RAINBOW_TIER, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
   COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
   ZEN_COIN_SCALE, ZEN_COIN_CAP,
+  JUICE_SQUIRT_CHANCE, JUICE_SQUIRT_TIER_BONUS,
 } from './config.js';
 import * as Physics from './physics.js';
 import * as Balls from './balls.js';
@@ -51,6 +52,10 @@ function setup() {
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
+    // Physics keeps running under the game-over overlay so the pile
+    // settles, but the run is over: no merges, no points, no fever
+    if (gameState !== 'playing') return;
+
     const merge = Balls.handleCollision(bodyA, bodyB);
 
     // Bomb starts its suck-in phase asynchronously; play the suction
@@ -69,6 +74,7 @@ function setup() {
       Fever.onMerge(Score.combo);
       Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
       Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
+      maybeSquirtJuice(merge);
       Audio.playMerge(merge.tierIndex, Score.combo);
       Input.hapticMerge(merge.tierIndex);
       Music.bumpActivity();
@@ -95,9 +101,9 @@ function setup() {
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
 
-  // Handle mute button, menu, and store clicks
-  canvas.addEventListener('mousedown', handleUIClick);
-  canvas.addEventListener('touchstart', handleUITouch, { passive: false });
+  // Mute button, menus, and store buttons get first refusal on every
+  // press; only presses they don't claim become drops
+  Input.setUIHitTest(checkUIHit);
 
   setupMobileFullscreen();
 
@@ -152,30 +158,52 @@ function checkNewUnlocks() {
   }
 }
 
-// ── UI Click Handling (per-state dispatch) ──────────────────────
-function handleUIClick(e) {
-  const rect = e.target.getBoundingClientRect();
-  const scaleX = GAME_WIDTH / rect.width;
-  const scaleY = GAME_HEIGHT / rect.height;
-  const x = (e.clientX - rect.left) * scaleX;
-  const y = (e.clientY - rect.top) * scaleY;
-  if (checkUIHit(x, y)) {
-    e.stopImmediatePropagation();
-  }
+// ── Juice Squirt ────────────────────────────────────────────────
+// Only some merges squirt — a constant spray would stop being a treat.
+// `merge` is the result from balls.js: the merge point, the seam angle
+// of the pinch, and the radius/tier of the fruit that squished.
+function maybeSquirtJuice(merge, force = false) {
+  // Tier that was squeezed (classic skips grapefruit, so don't infer it)
+  const sourceTier = merge.sourceTier != null ? merge.sourceTier : merge.tierIndex - 1;
+  const producedRainbow = merge.tierIndex === RAINBOW_TIER;
+  const chance = JUICE_SQUIRT_CHANCE + Math.max(0, sourceTier) * JUICE_SQUIRT_TIER_BONUS;
+  if (!force && !producedRainbow && Math.random() > chance) return;
+  const juiceTier = Math.max(0, Math.min(sourceTier, BALL_TIERS.length - 1));
+  Particles.emitJuiceSquirt(
+    merge.x, merge.y,
+    merge.seamAngle != null ? merge.seamAngle : Math.random() * Math.PI,
+    merge.sourceRadius,
+    juiceTier
+  );
 }
 
-function handleUITouch(e) {
-  const touch = e.touches[0];
-  const rect = e.target.getBoundingClientRect();
-  const scaleX = GAME_WIDTH / rect.width;
-  const scaleY = GAME_HEIGHT / rect.height;
-  const x = (touch.clientX - rect.left) * scaleX;
-  const y = (touch.clientY - rect.top) * scaleY;
-  if (checkUIHit(x, y)) {
-    e.stopImmediatePropagation();
+// Live fruit outlines so juice can splash onto and run down them
+function refreshJuiceColliders() {
+  const list = [];
+  for (const entry of Balls.getAll().values()) {
+    if (entry.isGhost) continue;
+    const r = entry.isBomb ? 16 : BALL_TIERS[entry.tierIndex].radius;
+    list.push({ x: entry.body.position.x, y: entry.body.position.y, r });
   }
+  Particles.setJuiceColliders(list, Store.getCupExtendPx());
 }
 
+// ── Drop Point ──────────────────────────────────────────────────
+// The drop line rises with the cup so fruit always enter from above
+// the rim (and above the danger line), stopping short of the UI.
+function getDropY() {
+  return Math.max(DROP_Y - Store.getCupExtendPx(), DROP_Y_MIN);
+}
+
+// Keep the aim clamp sized to whatever is about to fall
+function syncDropClamp() {
+  const r = Store.isBombQueued() ? 16 : BALL_TIERS[currentDropTier].radius;
+  Input.setClampRadius(r);
+}
+
+// ── UI Press Handling (per-state dispatch) ──────────────────────
+// Called synchronously by input.js on every pointer-down with game-space
+// coordinates. Returns true when something on screen took the press.
 function checkUIHit(x, y) {
   // Mute button — active in every state
   const btn = Renderer.MUTE_BTN;
@@ -257,10 +285,14 @@ function checkUIHit(x, y) {
           if (storeHit === 'cupExtend') {
             applyNewCupExtension();
           }
-          // colorBomb just queues the bomb for next drop (handled in drop logic)
+          // colorBomb/ghostBall just queue for the next drop (handled
+          // in drop logic); the bomb is smaller, so re-fit the aim clamp
+          syncDropClamp();
 
           Audio.playMerge(5, 1); // satisfying purchase sound
           touchTooltipId = null;
+        } else {
+          Audio.playDrop(0); // soft "nope"
         }
         return true;
       }
@@ -405,29 +437,32 @@ function loop(timestamp) {
         );
       } else if (now - lastDropTime >=
                  (modeCfg.dropCooldownMs || DROP_COOLDOWN_MS) * Fever.getCooldownScale()) {
+        const dropY = getDropY();
+        const dropX = Input.state.pointerX;
         if (Store.isBombQueued()) {
           // Drop a bomb ball instead of normal
-          Balls.spawnBombBall(Input.state.pointerX);
-          Particles.emitSpawnPop(Input.state.pointerX, 120, 0);
+          Balls.spawnBombBall(dropX, dropY);
+          Particles.emitSpawnPop(dropX, dropY, 1); // ~bomb-sized ring
           Audio.playDrop(7); // deeper sound for bomb
           Store.consumeBombQueue();
         } else if (Store.isGhostQueued()) {
           // Drop a ghost ball with the current drop tier color
-          Balls.spawnGhostBall(Input.state.pointerX, currentDropTier);
-          Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
+          Balls.spawnGhostBall(dropX, currentDropTier, dropY);
+          Particles.emitSpawnPop(dropX, dropY, currentDropTier);
           Audio.playDrop(currentDropTier);
           Store.consumeGhostQueue();
 
           currentDropTier = nextDropTier;
           nextDropTier = Balls.getNextDropTier();
         } else {
-          Balls.spawnBall(Input.state.pointerX, currentDropTier);
-          Particles.emitSpawnPop(Input.state.pointerX, 120, currentDropTier);
+          Balls.spawnBall(dropX, currentDropTier, dropY);
+          Particles.emitSpawnPop(dropX, dropY, currentDropTier);
           Audio.playDrop(currentDropTier);
 
           currentDropTier = nextDropTier;
           nextDropTier = Balls.getNextDropTier();
         }
+        syncDropClamp();
         lastDropTime = now;
       }
     }
@@ -443,6 +478,12 @@ function loop(timestamp) {
       Fever.onMerge(Score.combo);
       Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
       Particles.emitScorePopup(bombResult.x, bombResult.y, points, Score.combo);
+      // A bomb crushing a whole color at once always makes a mess
+      maybeSquirtJuice({
+        x: bombResult.x, y: bombResult.y, tierIndex: bombResult.tier,
+        seamAngle: bombResult.seamAngle, sourceTier: bombResult.sourceTier,
+        sourceRadius: bombResult.sourceRadius,
+      }, true);
       Audio.playMerge(bombResult.tier, 3);
       Input.hapticMerge(8);
       Music.bumpActivity(0.3);
@@ -524,7 +565,8 @@ function loop(timestamp) {
     }
   }
 
-  // Update particles
+  // Update particles (juice needs the current fruit layout to splash on)
+  if (gameState === 'playing' || gameState === 'gameover') refreshJuiceColliders();
   Particles.update();
   Balls.cleanupEffects();
 
@@ -558,6 +600,7 @@ function loop(timestamp) {
     balls: Balls.getAll(),
     previewX: Input.state.pointerX,
     previewTier: currentDropTier,
+    dropY: getDropY(),
     score: Score.current,
     bestScore: Math.max(Score.getHighScore(currentMode), Score.current),
     bestCombo: Math.max(Score.bestCombo, Score.getBestCombo()),
@@ -586,6 +629,11 @@ function loop(timestamp) {
       colorBomb: Store.canAfford('colorBomb', Score.current),
       cupExtend: Store.canAfford('cupExtend', Score.current),
       ghostBall: Store.canAfford('ghostBall', Score.current),
+    },
+    storeBlocked: {
+      colorBomb: Store.getBlockReason('colorBomb'),
+      cupExtend: Store.getBlockReason('cupExtend'),
+      ghostBall: Store.getBlockReason('ghostBall'),
     },
     storeTooltip,
     storeTooltipHint,
@@ -654,6 +702,7 @@ function startGame(modeId) {
 
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
+  syncDropClamp();
   rushTimeLeftMs = MODES[modeId].timeLimitMs || 0;
   Save.incrementGamesPlayed();
   gameState = 'playing';
@@ -673,8 +722,11 @@ function returnToMenu() {
   Balls.reset();
   Particles.reset();
   Store.reset();
+  Fever.reset();
   Physics.resetCup();
   Audio.stopDangerHum();
+  // Leaving mid-frenzy (zen exit) must drop the pitched-up soundscape
+  Audio.setFeverActive(false);
   Music.stop(0.5);
   gameState = 'menu';
 }

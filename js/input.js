@@ -6,6 +6,29 @@ import { CUP_LEFT_X, CUP_RIGHT_X, GAME_WIDTH } from './config.js';
 let canvas;
 let logicalW, logicalH;
 let isTouchDevice = false;
+// UI hit-test supplied by main.js: (x, y) in game space → true if a
+// button/menu consumed the press. Called synchronously inside the
+// pointer-down handler, so a press on a button can never also become
+// a drop. (The old approach — deferring the drop to a microtask so a
+// second listener could veto it — didn't work: browsers run microtasks
+// between event listeners, so the drop was queued before the veto.)
+let uiHitTest = null;
+
+export function setUIHitTest(fn) {
+  uiHitTest = fn;
+}
+
+function toLogical(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) * (logicalW / rect.width),
+    y: (clientY - rect.top) * (logicalH / rect.height),
+  };
+}
+// Half-width of whatever is about to drop — the aim clamp keeps the
+// whole fruit inside the rim, not just its center (a watermelon aimed
+// at the edge used to spawn overlapping the wall and get spat out).
+let clampRadius = 18;
 
 export const state = {
   pointerX: (CUP_LEFT_X + CUP_RIGHT_X) / 2,
@@ -57,12 +80,22 @@ export function init(canvasEl, logicalWidth, logicalHeight) {
   }, { passive: false });
 }
 
+function clampToCup(x) {
+  const margin = clampRadius + 4;
+  return Math.max(CUP_LEFT_X + margin, Math.min(CUP_RIGHT_X - margin, x));
+}
+
 function toLogicalX(clientX) {
   const rect = canvas.getBoundingClientRect();
   const scaleX = logicalW / rect.width;
-  const x = (clientX - rect.left) * scaleX;
-  const margin = 18;
-  return Math.max(CUP_LEFT_X + margin, Math.min(CUP_RIGHT_X - margin, x));
+  return clampToCup((clientX - rect.left) * scaleX);
+}
+
+// Called by main.js whenever the queued drop changes size, so the aim
+// clamp (and the preview that follows it) always fits the fruit.
+export function setClampRadius(r) {
+  clampRadius = Math.max(8, r || 0);
+  state.pointerX = clampToCup(state.pointerX);
 }
 
 // Unclamped game-space coordinates — used for UI hover (tooltips),
@@ -84,14 +117,12 @@ function onMouseDown(e) {
   state.pointerX = toLogicalX(e.clientX);
   state.pointerDown = true;
   state.pointerActive = true;
-  // Desktop: click = immediate drop (unless UI consumed the event)
-  // dropRequested is set after a microtask so UI handlers can cancel it
-  state.uiConsumed = false;
-  Promise.resolve().then(() => {
-    if (!state.uiConsumed) {
-      state.dropRequested = true;
-    }
-  });
+  // Desktop: click = immediate drop, unless a UI element takes it
+  const ui = toLogical(e.clientX, e.clientY);
+  state.uiConsumed = !!(uiHitTest && uiHitTest(ui.x, ui.y));
+  if (!state.uiConsumed) {
+    state.dropRequested = true;
+  }
 }
 
 function onMouseUp(e) {
@@ -109,7 +140,10 @@ function onTouchStart(e) {
   state.isDragging = true;
   state.dragStartX = x;
   state.pointerDown = true;
-  state.uiConsumed = false;
+  // A touch that lands on a button belongs to the button — the release
+  // must not drop a fruit
+  const ui = toLogical(touch.clientX, touch.clientY);
+  state.uiConsumed = !!(uiHitTest && uiHitTest(ui.x, ui.y));
 
   // Haptic feedback on touch start
   triggerHaptic('light');

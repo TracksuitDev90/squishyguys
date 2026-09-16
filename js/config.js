@@ -16,9 +16,19 @@ export const CUP_FLOOR_Y = CUP_BOTTOM_Y;
 export const DANGER_LINE_Y = CUP_TOP_Y + 30;
 export const DANGER_DURATION_MS = 2000;
 
-// Drop mechanics
+// Drop mechanics. The drop point rises with cup extensions (see
+// MAX_CUP_EXTENSIONS) but never above DROP_Y_MIN, which keeps the
+// preview fruit clear of the store buttons at the top of the screen.
 export const DROP_Y = CUP_TOP_Y - 40;
+export const DROP_Y_MIN = 180;
 export const DROP_COOLDOWN_MS = 400;
+
+// Cup extension — each CUP+ (bought or granted by the TALL CUP upgrade)
+// raises the walls by CUP_EXTEND_PX. Capped so the rim can never climb
+// into the score/store UI and the drop point always stays above the
+// danger line.
+export const CUP_EXTEND_PX = 35;
+export const MAX_CUP_EXTENSIONS = 4;
 
 // Physics
 export const GRAVITY = 1.2;
@@ -96,6 +106,21 @@ export const FEVER_DECAY_PER_SEC = 0.06;    // ~17s to fully drain from full
 export const FEVER_DURATION_MS = 9000;      // frenzy window length
 export const FEVER_SCORE_MULT = 2;          // point multiplier while active
 export const FEVER_COOLDOWN_SCALE = 0.5;    // drop cooldown scale while active
+
+// Juice squirt on merge — a burst of simulated fruit juice sprays out
+// of the pinch where two fruits squish together. It fires randomly so
+// it stays a treat rather than noise; bigger fruit are a little more
+// likely to squirt, and the rainbow always does.
+export const JUICE_SQUIRT_CHANCE = 0.32;
+export const JUICE_SQUIRT_TIER_BONUS = 0.025; // added per tier index
+export const MAX_JUICE_DROPLETS = 220;
+
+// Per-fruit look variation — every fruit of a tier is unmistakably that
+// fruit, but each individual drifts a touch in hue, lightness and
+// texture so a cup of apples doesn't read as photocopies.
+export const FRUIT_HUE_JITTER = 5;    // ± degrees
+export const FRUIT_LIGHT_JITTER = 4;  // ± percent lightness
+export const FRUIT_SAT_JITTER = 6;    // ± percent saturation
 
 // Drop weights (index → relative weight). Only unlocked tiers are eligible.
 // Higher tiers drop less frequently.

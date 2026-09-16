@@ -2,7 +2,11 @@
 // Manages all visual effects: sparkles, shockwaves, confetti,
 // floating score text, spawn pops, and screen shake.
 
-import { BALL_TIERS, RAINBOW_TIER } from './config.js';
+import {
+  BALL_TIERS, RAINBOW_TIER, GAME_WIDTH, INK,
+  CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y, CUP_BASE_EXTRA,
+  MAX_JUICE_DROPLETS,
+} from './config.js';
 import * as Skins from './skins.js';
 
 // ── Active effect pools ─────────────────────────────────────────
@@ -12,6 +16,7 @@ const confetti = [];
 const scorePopups = [];
 const spawnPops = [];
 const unlockFlashes = [];
+const juice = []; // fluid-simulated droplets (see emitJuiceSquirt)
 let screenShake = { x: 0, y: 0, intensity: 0, decay: 0.9 };
 let dangerPulse = 0; // 0-1, how much danger warning to show
 let feverActive = false; // ambient rising sparkles while frenzying
@@ -192,6 +197,114 @@ export function emitUnlockFlash(tierIndex) {
   });
 }
 
+// ── Juice Squirt (fluid sim) ────────────────────────────────────
+// When two fruits squish into one, juice sprays out of the pinch — the
+// seam runs perpendicular to the line between their centers, so the
+// spray fans out both ways along it. Droplets are simulated as a small
+// particle fluid (see updateJuice): they clump, splash, run down other
+// fruit and pool on the floor before soaking away.
+
+// Juice per fruit — what actually comes out when you squeeze one.
+const JUICE_COLORS = {
+  coconut:     '#F6F1E4', // coconut water
+  peach:       '#FFC076',
+  apple:       '#F4CF62', // golden apple juice
+  lemon:       '#FBF28C',
+  orange:      '#FFA33B',
+  watermelon:  '#FF6478',
+  blueberry:   '#5A4BCC',
+  grape:       '#8E44AD',
+  plum:        '#C43C96',
+  dragonfruit: '#EA3F8F',
+  grapefruit:  '#FF7A8C',
+  rainbow:     '#FFD700',
+};
+
+function juiceColorFor(tierIndex) {
+  const style = Skins.getTierStyle(tierIndex);
+  const name = BALL_TIERS[tierIndex].name;
+  if (Skins.getDetailMode() === 'fruit' || style.color === 'rainbow') {
+    return JUICE_COLORS[name] || '#FFD700';
+  }
+  // Palette-swap skins squirt a lighter tint of their own color
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(style.color);
+  if (!m) return '#FFD700';
+  const l = (h) => Math.min(255, parseInt(h, 16) + 28);
+  return `rgb(${l(m[1])},${l(m[2])},${l(m[3])})`;
+}
+
+// x,y: merge point · seamAngle: direction of the pinch seam ·
+// sourceRadius: radius of the fruits that merged · tierIndex: tier of
+// the fruit that merged (drives color and how much juice there is).
+// A squirt is a short-lived jet: it releases droplets over several
+// frames (hardest at first, tapering off) rather than dumping them all
+// at once, so the fluid leaves the pinch as a stream that stretches
+// into a string of drops in flight.
+const juiceJets = [];
+
+export function emitJuiceSquirt(x, y, seamAngle, sourceRadius, tierIndex) {
+  const color = juiceColorFor(tierIndex);
+  const r = sourceRadius || BALL_TIERS[Math.max(0, tierIndex)].radius;
+  const scale = Math.min(1.5, 0.6 + r / 45); // coconut≈0.87 … plum≈1.5
+  const count = Math.round(14 + r * 0.4);    // coconut≈19 … plum≈38
+  const frames = 7;
+  juiceJets.push({
+    x, y, seamAngle, color, scale,
+    r,
+    dropR: Math.max(2.6, Math.min(6, r * 0.14)),
+    perFrame: Math.ceil(count / frames),
+    frame: 0,
+    frames,
+  });
+}
+
+function spawnJetDroplets(jet) {
+  const { x, y, seamAngle, color, scale, r, dropR } = jet;
+  // Free slots — recycle the oldest droplets when the pool is full
+  const overflow = juice.length + jet.perFrame - MAX_JUICE_DROPLETS;
+  if (overflow > 0) juice.splice(0, overflow);
+
+  // Pressure drops as the squeeze finishes: first drops fly, last ones dribble
+  const pressure = 1.15 - (jet.frame / jet.frames) * 0.75;
+
+  for (let i = 0; i < jet.perFrame; i++) {
+    // Two opposed jets along the seam, plus the odd stray anywhere
+    const stray = Math.random() < 0.12;
+    const side = (i + jet.frame) % 2 === 0 ? 1 : -1;
+    const a = stray
+      ? Math.random() * Math.PI * 2
+      : seamAngle + (side > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.45;
+    const speed = (stray ? 0.8 + Math.random() * 1.4 : 2.2 + Math.random() * 3.2)
+                * scale * pressure;
+    const sr = r * (0.15 + Math.random() * 0.2);
+    juice.push({
+      x: x + Math.cos(a) * sr,
+      y: y + Math.sin(a) * sr,
+      px: 0, py: 0,
+      vx: Math.cos(a) * speed,
+      vy: Math.sin(a) * speed - 0.5 * scale, // slight lift — squirts arc
+      r: dropR * (0.75 + Math.random() * 0.5),
+      color,
+      life: 1,
+      decay: 1 / (70 + Math.random() * 50), // ~1.2–2 s
+      wet: 0,      // >0 while touching a surface (draws as a smear)
+      nx: 0, ny: 0, // last contact normal for the smear orientation
+      settled: 0,   // frames spent resting on the floor
+    });
+  }
+  jet.frame++;
+}
+
+// Colliders for the juice: the live fruit and the current cup height.
+// main.js refreshes these every frame while a run is on.
+let juiceBalls = [];
+let juiceCupExt = 0;
+
+export function setJuiceColliders(balls, cupExt) {
+  juiceBalls = balls;
+  juiceCupExt = cupExt || 0;
+}
+
 export function triggerShake(intensity) {
   screenShake.intensity = Math.min(screenShake.intensity + intensity, 25);
 }
@@ -276,6 +389,13 @@ export function update() {
     if (f.life <= 0) unlockFlashes.splice(i, 1);
   }
 
+  // Juice jets feed droplets in over a few frames, then the fluid runs
+  for (let i = juiceJets.length - 1; i >= 0; i--) {
+    spawnJetDroplets(juiceJets[i]);
+    if (juiceJets[i].frame >= juiceJets[i].frames) juiceJets.splice(i, 1);
+  }
+  if (juice.length) updateJuice();
+
   // Screen shake
   if (screenShake.intensity > 0.1) {
     screenShake.x = (Math.random() - 0.5) * screenShake.intensity * 2;
@@ -299,6 +419,7 @@ export function getDangerPulse() {
 
 export function draw(ctx) {
   drawShockwaves(ctx);
+  drawJuice(ctx);
   drawSparkles(ctx);
   drawConfetti(ctx);
   drawScorePopups(ctx);
@@ -409,7 +530,6 @@ function drawSpawnPops(ctx) {
 }
 
 function drawUnlockFlashes(ctx) {
-  const GAME_WIDTH = 400; // Import avoided for simplicity
   for (const f of unlockFlashes) {
     if (f.life < 0.5) continue; // only show in first half
 
@@ -431,6 +551,312 @@ function drawUnlockFlashes(ctx) {
   }
 }
 
+// ── Juice fluid simulation ──────────────────────────────────────
+// Particle-based viscoelastic fluid (Clavet, Beaudoin & Poulin 2005),
+// trimmed to what a squirt needs: viscosity impulses so droplets drag
+// on each other, then double-density relaxation — a pressure term that
+// keeps droplets from piling into one point plus a "near" term that
+// makes them cling into strands and blobs. Everything is in canvas
+// pixels with a one-frame timestep, so the constants are tuned by eye
+// rather than in SI units.
+const J_H = 17;          // interaction radius
+const J_REST = 3.0;      // rest density (sparser than this pulls together)
+const J_K = 0.12;        // pressure stiffness
+const J_KNEAR = 0.32;    // near-pressure stiffness (surface tension feel)
+const J_SIGMA = 0.12;    // linear viscosity
+const J_BETA = 0.03;     // quadratic viscosity (splash damping)
+const J_GRAVITY = 0.3;   // ≈ the fruit's own gravity in px/frame²
+const J_AIR = 0.985;
+
+// Inner x-limits of the cup at a given y: the walls flare outward
+// toward the base (mirrors physics.js buildCup)
+function cupInnerLeft(y) {
+  const rimY = CUP_TOP_Y - juiceCupExt - 20;
+  const t = Math.max(0, Math.min((y - rimY) / (CUP_BOTTOM_Y - rimY), 1));
+  return CUP_LEFT_X - CUP_BASE_EXTRA * t + 1;
+}
+function cupInnerRight(y) {
+  const rimY = CUP_TOP_Y - juiceCupExt - 20;
+  const t = Math.max(0, Math.min((y - rimY) / (CUP_BOTTOM_Y - rimY), 1));
+  return CUP_RIGHT_X + CUP_BASE_EXTRA * t - 1;
+}
+
+function updateJuice() {
+  const n = juice.length;
+
+  // Aging + gravity + air drag on the velocity, then a pass of
+  // viscosity impulses between neighbors
+  for (let i = 0; i < n; i++) {
+    const p = juice[i];
+    p.life -= p.decay * (p.settled > 0 ? 2.2 : 1); // pooled juice soaks away
+    p.vy += J_GRAVITY;
+    p.vx *= J_AIR;
+    p.vy *= J_AIR;
+  }
+  for (let i = 0; i < n; i++) {
+    const a = juice[i];
+    for (let j = i + 1; j < n; j++) {
+      const b = juice[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= J_H * J_H || d2 < 0.0001) continue;
+      const d = Math.sqrt(d2);
+      const q = d / J_H;
+      const nx = dx / d;
+      const ny = dy / d;
+      // Inward radial velocity — only damp approach, never pull apart
+      const u = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+      if (u > 0) {
+        const I = (1 - q) * (J_SIGMA * u + J_BETA * u * u) * 0.5;
+        a.vx -= I * nx; a.vy -= I * ny;
+        b.vx += I * nx; b.vy += I * ny;
+      }
+    }
+  }
+
+  // Predict positions
+  for (let i = 0; i < n; i++) {
+    const p = juice[i];
+    p.px = p.x;
+    p.py = p.y;
+    p.x += p.vx;
+    p.y += p.vy;
+  }
+
+  // Double density relaxation: push apart when crowded, and pull
+  // together through the near-density term so the spray coheres into
+  // strings and drops instead of dispersing like dust
+  for (let i = 0; i < n; i++) {
+    const a = juice[i];
+    let rho = 0;
+    let rhoNear = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const b = juice[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= J_H * J_H) continue;
+      const q = 1 - Math.sqrt(d2) / J_H;
+      rho += q * q;
+      rhoNear += q * q * q;
+    }
+    // Clamp so a dense cluster (e.g. a jet spawning into a corner)
+    // spreads out rather than detonating
+    const P = Math.min(J_K * (rho - J_REST), 0.5);
+    const Pnear = Math.min(J_KNEAR * rhoNear, 1.2);
+    let ddx = 0;
+    let ddy = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      const b = juice[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= J_H * J_H || d2 < 0.0001) continue;
+      const d = Math.sqrt(d2);
+      const q = 1 - d / J_H;
+      const D = (P * q + Pnear * q * q) * 0.5;
+      const nx = dx / d;
+      const ny = dy / d;
+      b.x += D * nx; b.y += D * ny;
+      ddx -= D * nx; ddy -= D * ny;
+    }
+    a.x += ddx;
+    a.y += ddy;
+  }
+
+  // Collisions: fruit first (so a droplet pushed out of a fruit still
+  // respects the cup), then walls and floor. Contact zeroes the normal
+  // velocity and keeps most of the tangential — juice runs down things.
+  for (let i = 0; i < n; i++) {
+    const p = juice[i];
+    p.wet = Math.max(0, p.wet - 1);
+
+    for (const b of juiceBalls) {
+      const dx = p.x - b.x;
+      const dy = p.y - b.y;
+      const rr = b.r + p.r * 0.6;
+      const d2 = dx * dx + dy * dy;
+      if (d2 >= rr * rr || d2 < 0.0001) continue;
+      const d = Math.sqrt(d2);
+      const nx = dx / d;
+      const ny = dy / d;
+      p.x = b.x + nx * rr;
+      p.y = b.y + ny * rr;
+      const vn = p.vx * nx + p.vy * ny;
+      if (vn < 0) {
+        // Bleed off the impact; a little bounce on the first hard hit
+        const bounce = -vn > 4 ? 0.18 : 0;
+        p.vx -= vn * nx * (1 + bounce);
+        p.vy -= vn * ny * (1 + bounce);
+      }
+      // Cling: tangential drag against the skin
+      p.vx *= 0.9;
+      p.vy *= 0.9;
+      p.wet = 3;
+      p.nx = nx; p.ny = ny;
+    }
+
+    const left = cupInnerLeft(p.y) + p.r;
+    const right = cupInnerRight(p.y) - p.r;
+    if (p.x < left) {
+      p.x = left;
+      if (p.vx < 0) p.vx *= -0.15;
+      p.vy *= 0.92;
+      p.wet = 3; p.nx = 1; p.ny = 0;
+    } else if (p.x > right) {
+      p.x = right;
+      if (p.vx > 0) p.vx *= -0.15;
+      p.vy *= 0.92;
+      p.wet = 3; p.nx = -1; p.ny = 0;
+    }
+    const floor = CUP_BOTTOM_Y - p.r * 0.5;
+    if (p.y > floor) {
+      p.y = floor;
+      if (p.vy > 0) p.vy *= -0.1;
+      p.vx *= 0.8;
+      p.wet = 3; p.nx = 0; p.ny = -1;
+      p.settled++;
+    } else {
+      p.settled = 0;
+    }
+  }
+
+  // Velocity from the corrected displacement, and cull the spent
+  for (let i = n - 1; i >= 0; i--) {
+    const p = juice[i];
+    p.vx = p.x - p.px;
+    p.vy = p.y - p.py;
+    // Cap runaway speeds so a bad relaxation step can't launch a droplet
+    const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (sp > 14) { p.vx *= 14 / sp; p.vy *= 14 / sp; }
+    if (p.life <= 0 || p.y > CUP_BOTTOM_Y + 20 || p.x < -20 || p.x > GAME_WIDTH + 20) {
+      juice.splice(i, 1);
+    }
+  }
+}
+
+// Droplet blobs in the game's sticker style: an ink outline pass under
+// a fill pass, so touching droplets merge into one outlined blob (the
+// strokes of every droplet are drawn before any fill covers them).
+// Neighbors within reach get a bridge between them for a stringy,
+// liquid feel, and a droplet in contact with a surface squashes flat
+// along it.
+function dropletPath(ctx, p, grow) {
+  const r = p.r * (p.life < 0.3 ? p.life / 0.3 : 1) + grow;
+  if (r <= 0.2) return false;
+  if (p.wet > 0) {
+    // Flatten against the contact normal
+    const ang = Math.atan2(p.ny, p.nx);
+    ctx.ellipse(p.x, p.y, r * 0.7, r * 1.35, ang, 0, Math.PI * 2);
+  } else {
+    // Stretch slightly along the motion vector when moving fast
+    const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    const stretch = Math.min(sp * 0.045, 0.35);
+    const ang = Math.atan2(p.vy, p.vx);
+    ctx.ellipse(p.x, p.y, r * (1 + stretch), r * (1 - stretch * 0.4), ang, 0, Math.PI * 2);
+  }
+  return true;
+}
+
+function drawJuice(ctx) {
+  if (!juice.length) return;
+  const n = juice.length;
+  const bridgeDist = J_H * 0.75;
+
+  // Group by color so each squirt keeps its own tint
+  const groups = new Map();
+  for (const p of juice) {
+    let g = groups.get(p.color);
+    if (!g) { g = []; groups.set(p.color, g); }
+    g.push(p);
+  }
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const [color, list] of groups) {
+    // Pass 1: ink outline (grown droplets + fat bridges)
+    ctx.fillStyle = INK;
+    ctx.strokeStyle = INK;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    for (const p of list) {
+      ctx.moveTo(p.x, p.y);
+      dropletPath(ctx, p, 1.4);
+    }
+    ctx.fill();
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (dx * dx + dy * dy > bridgeDist * bridgeDist) continue;
+        ctx.lineWidth = Math.min(a.r, b.r) * Math.min(a.life, b.life, 1) * 1.1 + 2.8;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+
+    // Pass 2: juice fill on top
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    for (const p of list) {
+      ctx.moveTo(p.x, p.y);
+      dropletPath(ctx, p, 0);
+    }
+    ctx.fill();
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (dx * dx + dy * dy > bridgeDist * bridgeDist) continue;
+        ctx.lineWidth = Math.min(a.r, b.r) * Math.min(a.life, b.life, 1) * 1.1;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+    }
+
+    // Pass 3: one glint per blob — only the biggest droplet of any
+    // cluster catches the light, so a clump reads as one shiny mass
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (p.r < 3 || p.life < 0.4) continue;
+      let biggest = true;
+      for (let j = 0; j < list.length && biggest; j++) {
+        if (j === i) continue;
+        const q = list[j];
+        const dx = q.x - p.x;
+        const dy = q.y - p.y;
+        if (dx * dx + dy * dy < bridgeDist * bridgeDist && (q.r > p.r || (q.r === p.r && j < i))) {
+          biggest = false;
+        }
+      }
+      if (!biggest) continue;
+      const gr = p.r * 0.32;
+      ctx.moveTo(p.x - p.r * 0.3 + gr, p.y - p.r * 0.35);
+      ctx.arc(p.x - p.r * 0.3, p.y - p.r * 0.35, gr, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
 // ── Easing ──────────────────────────────────────────────────────
 function easeOutCubic(t) {
   return 1 - Math.pow(1 - t, 3);
@@ -443,6 +869,9 @@ export function reset() {
   scorePopups.length = 0;
   spawnPops.length = 0;
   unlockFlashes.length = 0;
+  juice.length = 0;
+  juiceJets.length = 0;
+  juiceBalls = [];
   screenShake.intensity = 0;
   screenShake.x = 0;
   screenShake.y = 0;

@@ -34,15 +34,17 @@ function nextTierFrom(tierIndex) {
 
 // ── Public API ──────────────────────────────────────────────────
 
-export function spawnBall(x, tierIndex) {
-  const body = Physics.createBallBody(x, DROP_Y, tierIndex);
+// `y` defaults to the base drop line; main.js passes the effective
+// one, which rises with cup extensions.
+export function spawnBall(x, tierIndex, y = DROP_Y) {
+  const body = Physics.createBallBody(x, y, tierIndex);
   activeBalls.set(body.id, { body, tierIndex });
   return body;
 }
 
-export function spawnBombBall(x) {
+export function spawnBombBall(x, y = DROP_Y) {
   // Bomb ball: small (radius ~16), special label
-  const body = Physics.createBombBody(x, DROP_Y);
+  const body = Physics.createBombBody(x, y);
   activeBalls.set(body.id, { body, tierIndex: -1, isBomb: true });
   return body;
 }
@@ -50,8 +52,8 @@ export function spawnBombBall(x) {
 // ── Ghost Ball ─────────────────────────────────────────────────
 let activeGhostBall = null;
 
-export function spawnGhostBall(x, tierIndex) {
-  const body = Physics.createGhostBody(x, DROP_Y, tierIndex);
+export function spawnGhostBall(x, tierIndex, y = DROP_Y) {
+  const body = Physics.createGhostBody(x, y, tierIndex);
   const entry = { body, tierIndex, isGhost: true };
   activeBalls.set(body.id, entry);
   activeGhostBall = { id: body.id, body, tierIndex };
@@ -92,6 +94,7 @@ export function reset() {
   activeBalls.clear();
   mergeEffects.length = 0;
   activeGhostBall = null;
+  activeBombEffect = null; // a run can end mid-suck (rush clock, zen exit)
   recentDrops.length = 0;
   unlockedTiers.clear();
   [0, 1, 2, 3].forEach(t => unlockedTiers.add(t));
@@ -165,6 +168,8 @@ export function handleCollision(bodyA, bodyB) {
 
   // Check for bomb collision
   if (ballA.isBomb || ballB.isBomb) {
+    // Two bombs bumping is just a bump — nothing to pull in
+    if (ballA.isBomb && ballB.isBomb) return null;
     const bomb = ballA.isBomb ? ballA : ballB;
     const target = ballA.isBomb ? ballB : ballA;
     triggerBombEffect(bomb, target);
@@ -220,6 +225,7 @@ function triggerBombEffect(bombEntry, targetEntry) {
   const targets = [];
   for (const [id, entry] of activeBalls) {
     if (entry === bombEntry) continue; // skip the bomb itself
+    if (entry.isBomb || entry.isGhost) continue; // phasing/bomb balls stay put
     if (entry.tierIndex === targetTier && !entry.body.isMerging) {
       targets.push({ id, body: entry.body });
     }
@@ -290,12 +296,11 @@ export function updateBombEffect() {
       totalPoints += merge.points;
     }
 
-    // Odd ball left over — unmark it
-    if (targets.length % 2 === 1) {
-      const odd = targets[targets.length - 1];
-      if (activeBalls.has(odd.id)) {
-        odd.body.isMerging = false;
-      }
+    // Anything not consumed (the odd ball out, or a pair whose partner
+    // vanished mid-suck) goes back to normal play — never leave a ball
+    // stranded with isMerging on, or it can never merge again
+    for (const t of targets) {
+      if (activeBalls.has(t.id)) t.body.isMerging = false;
     }
 
     // Big merge effect at center
@@ -314,6 +319,9 @@ export function updateBombEffect() {
       tier: nextTierFrom(targetTier),
       x: centerX,
       y: centerY,
+      seamAngle: Math.random() * Math.PI, // no single pinch — spray anywhere
+      sourceTier: targetTier,
+      sourceRadius: BALL_TIERS[targetTier].radius,
     };
     activeBombEffect = null;
     return result;
@@ -331,14 +339,16 @@ function performMerge(bodies, tierIndex) {
     b.isMerging = true;
   }
 
-  // Calculate midpoint
-  let mx = 0, my = 0;
-  for (const b of bodies) {
-    mx += b.position.x;
-    my += b.position.y;
-  }
-  mx /= bodies.length;
-  my /= bodies.length;
+  // The new fruit appears between the two that actually touched. A zen
+  // triple pulls in a third from anywhere in the cup, and averaging it
+  // in used to spawn the grapefruit somewhere in mid-air between them.
+  const a = bodies[0];
+  const b = bodies[1];
+  const mx = (a.position.x + b.position.x) / 2;
+  const my = (a.position.y + b.position.y) / 2;
+  // Juice squirts out of the pinch, perpendicular to the line of centers
+  const seamAngle = Math.atan2(b.position.y - a.position.y,
+                               b.position.x - a.position.x) + Math.PI / 2;
 
   // Remove old balls
   for (const b of bodies) {
@@ -362,7 +372,15 @@ function performMerge(bodies, tierIndex) {
     duration: 600,
   });
 
-  return { points: nextTierData.points, tierIndex: nextTier, x: mx, y: my };
+  return {
+    points: nextTierData.points,
+    tierIndex: nextTier,
+    x: mx,
+    y: my,
+    seamAngle,
+    sourceTier: tierIndex,
+    sourceRadius: BALL_TIERS[tierIndex].radius,
+  };
 }
 
 // ── Game Over Check ─────────────────────────────────────────────
