@@ -7,7 +7,8 @@
 import { GAME_WIDTH, GAME_HEIGHT, MODES, BALL_TIERS } from './config.js';
 import * as Save from './save.js';
 import * as Skins from './skins.js';
-import { drawDecorBall, drawCoinIcon } from './renderer.js';
+import * as Cups from './cups.js';
+import { drawDecorBall, drawCoinIcon, drawCupThumb } from './renderer.js';
 
 // ── Layouts ─────────────────────────────────────────────────────
 export const MENU_BUTTONS = [
@@ -23,6 +24,23 @@ export const GAMEOVER_BUTTONS = [
 ];
 
 export const SHOP_BACK_BUTTON = { id: 'back', x: 130, y: 628, w: 140, h: 44, label: 'BACK' };
+
+// Shop tabs — one catalog per tab so each list has room to breathe
+export const SHOP_TABS = [
+  { id: 'skins',    x: 30,  y: 76, w: 108, h: 27, label: 'SKINS' },
+  { id: 'cups',     x: 146, y: 76, w: 108, h: 27, label: 'CUPS' },
+  { id: 'upgrades', x: 262, y: 76, w: 108, h: 27, label: 'UPGRADES' },
+];
+const SHOP_LIST_TOP = 116;
+let activeTab = 'skins';
+
+export function getShopTab() {
+  return activeTab;
+}
+
+export function setShopTab(id) {
+  if (SHOP_TABS.some(t => t.id === id)) activeTab = id;
+}
 
 // ── Shared helpers ──────────────────────────────────────────────
 function roundRectPath(ctx, x, y, w, h, r) {
@@ -167,6 +185,7 @@ export function drawShop(ctx) {
   ctx.fillStyle = 'rgba(255, 215, 0, 0.9)';
   ctx.fillText(Save.getCoins().toLocaleString(), GAME_WIDTH - 60, 56);
 
+  drawShopTabs(ctx);
   drawShopCatalog(ctx);
 
   // Back button
@@ -183,26 +202,49 @@ export function drawShop(ctx) {
 // can never drift apart.
 function getSkinRows() {
   return Skins.SKINS.map((skin, i) => ({
-    id: skin.id, skin, x: 30, y: 96 + i * 70, w: 340, h: 62,
+    id: skin.id, skin, x: 30, y: SHOP_LIST_TOP + i * 70, w: 340, h: 62,
+  }));
+}
+
+function getCupRows() {
+  return Cups.CUPS.map((cup, i) => ({
+    id: cup.id, cup, x: 30, y: SHOP_LIST_TOP + i * 66, w: 340, h: 58,
   }));
 }
 
 function getUpgradeRows() {
   return Skins.UPGRADES.map((up, i) => ({
-    id: up.id, up, x: 30, y: 418 + i * 68, w: 340, h: 58,
+    id: up.id, up, x: 30, y: SHOP_LIST_TOP + i * 68, w: 340, h: 58,
   }));
 }
 
+function drawShopTabs(ctx) {
+  ctx.save();
+  for (const tab of SHOP_TABS) {
+    const on = tab.id === activeTab;
+    roundRectPath(ctx, tab.x, tab.y, tab.w, tab.h, tab.h / 2);
+    ctx.fillStyle = on ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.05)';
+    ctx.fill();
+    ctx.strokeStyle = on ? 'rgba(255, 255, 255, 0.6)' : 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.font = `${on ? 'bold ' : ''}14px "Patrick Hand", cursive`;
+    ctx.fillStyle = on ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.45)';
+    ctx.fillText(tab.label, tab.x + tab.w / 2, tab.y + 19);
+  }
+  ctx.restore();
+}
+
 function drawShopCatalog(ctx) {
+  if (activeTab === 'skins') drawSkinRows(ctx);
+  else if (activeTab === 'cups') drawCupRows(ctx);
+  else drawUpgradeRows(ctx);
+}
+
+function drawSkinRows(ctx) {
   const coins = Save.getCoins();
   ctx.save();
-
-  // ── Skins ──
-  ctx.textAlign = 'left';
-  ctx.font = '14px "Patrick Hand", cursive';
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.fillText('SKINS', 32, 88);
-
   let wobble = 0;
   for (const row of getSkinRows()) {
     const { skin } = row;
@@ -246,13 +288,60 @@ function drawShopCatalog(ctx) {
       ctx.fillText(skin.price.toLocaleString(), row.x + 138, row.y + 47);
     }
   }
+  ctx.restore();
+}
 
-  // ── Upgrades ──
-  ctx.textAlign = 'left';
-  ctx.font = '14px "Patrick Hand", cursive';
-  ctx.fillStyle = 'rgba(255,255,255,0.35)';
-  ctx.fillText('UPGRADES', 32, 410);
+// Cup materials — each row carries a little painted thumbnail of the
+// real cup so the material speaks for itself
+function drawCupRows(ctx) {
+  const coins = Save.getCoins();
+  ctx.save();
+  let wobble = 0;
+  for (const row of getCupRows()) {
+    const { cup } = row;
+    const owned = Save.isCupUnlocked(cup.id);
+    const equipped = Cups.getActiveCupId() === cup.id;
+    const affordable = coins >= cup.price;
 
+    const accent = equipped ? '46, 204, 113'
+                 : owned || affordable ? '255, 255, 255'
+                 : '150, 150, 150';
+    drawPanel(ctx, row, { accent, wobbleSeed: wobble++ * 2.3 });
+
+    drawCupThumb(cup.id, row.x + 12, row.y + 7, 60, 44);
+
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 17px "Patrick Hand", cursive';
+    ctx.fillStyle = `rgba(255,255,255,${owned || affordable ? 0.9 : 0.45})`;
+    ctx.fillText(cup.name, row.x + 90, row.y + 24);
+
+    ctx.font = '12px "Patrick Hand", cursive';
+    ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    ctx.fillText(cup.desc, row.x + 90, row.y + 44);
+
+    ctx.textAlign = 'right';
+    ctx.font = '13px "Patrick Hand", cursive';
+    if (equipped) {
+      ctx.fillStyle = 'rgba(130, 235, 175, 0.9)';
+      ctx.fillText('EQUIPPED', row.x + row.w - 14, row.y + 24);
+    } else if (owned) {
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillText('tap to equip', row.x + row.w - 14, row.y + 24);
+    } else {
+      const label = cup.price.toLocaleString();
+      const tw = ctx.measureText(label).width;
+      drawCoinIcon(row.x + row.w - 14 - tw - 10, row.y + 20, 6);
+      ctx.fillStyle = affordable ? 'rgba(255, 215, 0, 0.85)' : 'rgba(255, 215, 0, 0.35)';
+      ctx.fillText(label, row.x + row.w - 14, row.y + 24);
+    }
+  }
+  ctx.restore();
+}
+
+function drawUpgradeRows(ctx) {
+  const coins = Save.getCoins();
+  ctx.save();
+  let wobble = 5;
   for (const row of getUpgradeRows()) {
     const { up } = row;
     const level = Save.getUpgradeLevel(up.id);
@@ -293,18 +382,31 @@ function drawShopCatalog(ctx) {
       ctx.fillText(price.toLocaleString(), row.x + row.w - 16, row.y + 46);
     }
   }
-
   ctx.restore();
 }
 
-// Returns { type: 'back' } | { type: 'skin', id } | { type: 'upgrade', id } | null
+// Returns { type: 'back' } | { type: 'tab', id } | { type: 'skin', id }
+//       | { type: 'cup', id } | { type: 'upgrade', id } | null
 export function checkShopHit(x, y) {
   if (hitRect(SHOP_BACK_BUTTON, x, y)) return { type: 'back' };
-  for (const row of getSkinRows()) {
-    if (hitRect(row, x, y)) return { type: 'skin', id: row.id };
+  for (const tab of SHOP_TABS) {
+    if (hitRect({ x: tab.x, y: tab.y - 6, w: tab.w, h: tab.h + 12 }, x, y)) {
+      activeTab = tab.id;
+      return { type: 'tab', id: tab.id };
+    }
   }
-  for (const row of getUpgradeRows()) {
-    if (hitRect(row, x, y)) return { type: 'upgrade', id: row.id };
+  if (activeTab === 'skins') {
+    for (const row of getSkinRows()) {
+      if (hitRect(row, x, y)) return { type: 'skin', id: row.id };
+    }
+  } else if (activeTab === 'cups') {
+    for (const row of getCupRows()) {
+      if (hitRect(row, x, y)) return { type: 'cup', id: row.id };
+    }
+  } else {
+    for (const row of getUpgradeRows()) {
+      if (hitRect(row, x, y)) return { type: 'upgrade', id: row.id };
+    }
   }
   return null;
 }

@@ -9,6 +9,9 @@ import {
 import * as Particles from './particles.js';
 import * as Menus from './menus.js';
 import * as Skins from './skins.js';
+import * as Cups from './cups.js';
+import * as CupArt from './cupart.js';
+import * as Perf from './perf.js';
 import { STORE_ITEMS } from './store.js';
 
 // Store button layout — tucked up under the score/best readout
@@ -20,7 +23,9 @@ const STORE_BUTTONS = [
 ];
 
 let canvas, ctx;
-let wobbleSeeds = [];
+// Backing-store scale (devicePixelRatio capped by the adaptive quality
+// level). Every cached sprite is rendered at this scale.
+let renderScale = 1;
 
 // Per-ball squish state (keyed by body.id)
 const ballSquish = new Map();
@@ -31,17 +36,28 @@ let spotlightGradient = null;
 let vignetteGradient = null;
 let feverGlowGradient = null;
 
+// Pre-rendered full-screen layers. Filling the screen with a gradient
+// three times a frame is real fill-rate on a 3x phone; a cached bitmap
+// blit is one cheap copy.
+let bgLayer = null;       // background gradient + spotlight
+let vignetteLayer = null; // corner darkening
+
 // Ambient floating dust motes for atmosphere
 const dustMotes = [];
 const DUST_COUNT = 22;
+let dustEnabled = true;
+
+// Hand-drawn "boil": linework re-jitters ~8 times a second. It cycles
+// through a fixed handful of drawings (like traditional animation) so
+// every fruit sprite only ever needs BOIL_FRAMES cached renders.
+const BOIL_FRAMES = 3;
+const BOIL_MS = 125;
+let boilFrame = 0;
+let boilT = 0;
 
 export function init(canvasEl) {
   canvas = canvasEl;
   ctx = canvas.getContext('2d');
-
-  for (let i = 0; i < 100; i++) {
-    wobbleSeeds.push((Math.random() - 0.5) * 3);
-  }
 
   for (let i = 0; i < DUST_COUNT; i++) {
     dustMotes.push({
@@ -55,7 +71,11 @@ export function init(canvasEl) {
     });
   }
 
-  buildStaticGradients();
+  applyQuality(Perf.getSettings());
+  Perf.onChange((level, settings) => {
+    applyQuality(settings);
+    Perf.settle(600);
+  });
   handleResize();
   window.addEventListener('resize', handleResize);
   window.addEventListener('orientationchange', handleResize);
@@ -67,10 +87,60 @@ export function init(canvasEl) {
   }
 }
 
-// Rebuild the cached background gradients — call after a skin/theme
-// change so the new palette takes effect immediately.
+// Rebuild the cached background gradients and sprite caches — call
+// after a skin/theme/cup change so the new look takes effect at once.
 export function applyTheme() {
   buildStaticGradients();
+  buildLayers();
+  spriteCache.clear();
+  cupCache.clear();
+}
+
+function applyQuality(settings) {
+  dustEnabled = settings.dust;
+  const next = Math.min(window.devicePixelRatio || 1, settings.maxScale);
+  if (next !== renderScale) {
+    renderScale = next;
+    spriteCache.clear();
+    cupCache.clear();
+    if (canvas) handleResize();
+  }
+}
+
+// Offscreen canvas at the current render scale covering the game area
+function makeLayer(extra = 0) {
+  const c = document.createElement('canvas');
+  c.width = Math.ceil((GAME_WIDTH + extra * 2) * renderScale);
+  c.height = Math.ceil((GAME_HEIGHT + extra * 2) * renderScale);
+  const lctx = c.getContext('2d');
+  lctx.scale(renderScale, renderScale);
+  lctx.translate(extra, extra);
+  return { canvas: c, ctx: lctx, extra };
+}
+
+// Layers are padded by the max screen-shake so a shake never reveals
+// a bare edge
+const LAYER_PAD = 30;
+
+function buildLayers() {
+  if (!bgGradient) buildStaticGradients();
+  const bg = makeLayer(LAYER_PAD);
+  bg.ctx.fillStyle = bgGradient;
+  bg.ctx.fillRect(-LAYER_PAD, -LAYER_PAD, GAME_WIDTH + LAYER_PAD * 2, GAME_HEIGHT + LAYER_PAD * 2);
+  bg.ctx.fillStyle = spotlightGradient;
+  bg.ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  bgLayer = bg;
+
+  const vg = makeLayer(0);
+  vg.ctx.fillStyle = vignetteGradient;
+  vg.ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  vignetteLayer = vg;
+}
+
+function drawLayer(layer) {
+  const s = 1 / renderScale;
+  ctx.drawImage(layer.canvas, -layer.extra, -layer.extra,
+                layer.canvas.width * s, layer.canvas.height * s);
 }
 
 function buildStaticGradients() {
@@ -108,7 +178,7 @@ function buildStaticGradients() {
 }
 
 function handleResize() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = renderScale;
   const vv = window.visualViewport;
   const maxW = vv ? vv.width : window.innerWidth;
   const maxH = vv ? vv.height : window.innerHeight;
@@ -125,18 +195,22 @@ function handleResize() {
 
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  canvas.width = GAME_WIDTH * dpr;
-  canvas.height = GAME_HEIGHT * dpr;
+  canvas.width = Math.round(GAME_WIDTH * dpr);
+  canvas.height = Math.round(GAME_HEIGHT * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildLayers();
 }
 
 // ── Main Render ─────────────────────────────────────────────────
 export function render(state) {
   const shake = Particles.getScreenShake();
 
-  // Clear in un-shaken space so big shakes never leave stale pixels
-  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  // Which of the cached hand-drawn "boil" frames is showing right now
+  boilFrame = Math.floor(performance.now() / BOIL_MS) % BOIL_FRAMES;
+  boilT = boilFrame * 2.1;
 
+  // The background layer is padded past the edges, so nothing needs
+  // clearing first — it overwrites the whole canvas even mid-shake
   ctx.save();
   ctx.translate(shake.x, shake.y);
 
@@ -145,8 +219,7 @@ export function render(state) {
   // Menu screens: background + particles + screen content, no cup
   if (state.gameState === 'menu' || state.gameState === 'shop') {
     Particles.draw(ctx);
-    ctx.fillStyle = vignetteGradient;
-    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    drawLayer(vignetteLayer);
     if (state.gameState === 'menu') {
       Menus.drawMenu(ctx, state);
     } else {
@@ -167,8 +240,7 @@ export function render(state) {
   Particles.draw(ctx);
 
   // Vignette sits above the scene but below the UI
-  ctx.fillStyle = vignetteGradient;
-  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  drawLayer(vignetteLayer);
 
   if (state.gameState === 'playing') {
     if (!state.hasActiveGhost) {
@@ -200,14 +272,13 @@ export function render(state) {
 
 // ── Background ──────────────────────────────────────────────────
 function drawBackground() {
-  ctx.fillStyle = bgGradient;
-  ctx.fillRect(-30, -30, GAME_WIDTH + 60, GAME_HEIGHT + 60);
+  drawLayer(bgLayer);
 
-  ctx.fillStyle = spotlightGradient;
-  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  if (!dustEnabled) return;
 
   // Slow-drifting dust motes give the scene depth and life
   const t = performance.now() * 0.001;
+  ctx.fillStyle = '#cfe0ff';
   for (const m of dustMotes) {
     m.y -= m.speed;
     m.x += m.drift + Math.sin(t + m.phase) * 0.08;
@@ -217,7 +288,6 @@ function drawBackground() {
 
     const twinkle = 0.7 + Math.sin(t * 1.5 + m.phase) * 0.3;
     ctx.globalAlpha = m.alpha * twinkle;
-    ctx.fillStyle = '#cfe0ff';
     ctx.beginPath();
     ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
     ctx.fill();
@@ -226,6 +296,9 @@ function drawBackground() {
 }
 
 // ── Danger Zone (red glow when approaching game over) ───────────
+let dangerGrad = null;
+let dangerGradY = null;
+
 function drawDangerZone(dangerLevel, cupExt) {
   if (dangerLevel <= 0) return;
 
@@ -233,12 +306,17 @@ function drawDangerZone(dangerLevel, cupExt) {
   const pulse = Math.sin(performance.now() * 0.008) * 0.3 + 0.7;
   const alpha = dangerLevel * 0.25 * pulse;
 
-  // Red vignette at top of cup
-  const grad = ctx.createLinearGradient(0, effectiveTopY - 40, 0, effectiveTopY + 80);
-  grad.addColorStop(0, `rgba(231, 76, 60, ${alpha})`);
-  grad.addColorStop(1, 'rgba(231, 76, 60, 0)');
-  ctx.fillStyle = grad;
+  // Red vignette at top of cup (gradient cached; alpha animated)
+  if (!dangerGrad || dangerGradY !== effectiveTopY) {
+    dangerGrad = ctx.createLinearGradient(0, effectiveTopY - 40, 0, effectiveTopY + 80);
+    dangerGrad.addColorStop(0, 'rgba(231, 76, 60, 1)');
+    dangerGrad.addColorStop(1, 'rgba(231, 76, 60, 0)');
+    dangerGradY = effectiveTopY;
+  }
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = dangerGrad;
   ctx.fillRect(CUP_LEFT_X - 10, effectiveTopY - 40, CUP_RIGHT_X - CUP_LEFT_X + 20, 120);
+  ctx.globalAlpha = 1;
 
   // Side edge glow
   const edgeAlpha = dangerLevel * 0.15 * pulse;
@@ -247,73 +325,44 @@ function drawDangerZone(dangerLevel, cupExt) {
 }
 
 // ── Cup ─────────────────────────────────────────────────────────
-function drawCup(cupExt) {
-  ctx.save();
+// The cup is a real material (see cupart.js) painted once into an
+// offscreen sprite per (style, height, scale) and blitted each frame.
+const cupCache = new Map();
+let cupShownExt = 0; // animated height so a CUP+ purchase grows visibly
 
-  // Walls flare outward: the base sits CUP_BASE_EXTRA wider per side
-  const effectiveTopY = CUP_TOP_Y - (cupExt || 0);
-  const leftTop = { x: CUP_LEFT_X, y: effectiveTopY - 20 };
-  const leftBot = { x: CUP_LEFT_X - CUP_BASE_EXTRA, y: CUP_BOTTOM_Y };
-  const rightBot = { x: CUP_RIGHT_X + CUP_BASE_EXTRA, y: CUP_BOTTOM_Y };
-  const rightTop = { x: CUP_RIGHT_X, y: effectiveTopY - 20 };
-
-  // Outer glow
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-  ctx.lineWidth = CUP_WALL_THICKNESS + 12;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(leftTop.x, leftTop.y);
-  ctx.lineTo(leftBot.x, leftBot.y);
-  ctx.lineTo(rightBot.x, rightBot.y);
-  ctx.lineTo(rightTop.x, rightTop.y);
-  ctx.stroke();
-
-  // Inner glow
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = CUP_WALL_THICKNESS + 6;
-  ctx.beginPath();
-  ctx.moveTo(leftTop.x, leftTop.y);
-  ctx.lineTo(leftBot.x, leftBot.y);
-  ctx.lineTo(rightBot.x, rightBot.y);
-  ctx.lineTo(rightTop.x, rightTop.y);
-  ctx.stroke();
-
-  // Main walls (wobbly)
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth = CUP_WALL_THICKNESS;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  drawWobblyLine(leftTop.x, leftTop.y, leftBot.x, leftBot.y, 0);
-  drawWobblyLine(leftBot.x, leftBot.y, rightBot.x, rightBot.y, 20);
-  drawWobblyLine(rightBot.x, rightBot.y, rightTop.x, rightTop.y, 40);
-
-  // Highlight edge (thin bright line on inside)
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(leftTop.x + CUP_WALL_THICKNESS / 2, leftTop.y);
-  ctx.lineTo(leftBot.x + CUP_WALL_THICKNESS / 2, leftBot.y - 2);
-  ctx.lineTo(rightBot.x - CUP_WALL_THICKNESS / 2, rightBot.y - 2);
-  ctx.lineTo(rightTop.x - CUP_WALL_THICKNESS / 2, rightTop.y);
-  ctx.stroke();
-
-  ctx.restore();
+function getCupSprite(styleId, cupExt) {
+  const key = `${styleId}:${cupExt}:${renderScale}`;
+  let sprite = cupCache.get(key);
+  if (!sprite) {
+    sprite = CupArt.renderCup(styleId, {
+      leftX: CUP_LEFT_X, rightX: CUP_RIGHT_X,
+      rimY: CUP_TOP_Y - cupExt - 20, bottomY: CUP_BOTTOM_Y,
+      baseExtra: CUP_BASE_EXTRA, wall: CUP_WALL_THICKNESS,
+    }, renderScale);
+    // The grow animation passes through a few intermediate heights;
+    // keep the cache small so they don't pile up
+    if (cupCache.size >= 6) cupCache.delete(cupCache.keys().next().value);
+    cupCache.set(key, sprite);
+  }
+  return sprite;
 }
 
-function drawWobblyLine(x1, y1, x2, y2, seedOffset) {
-  const segments = 12;
-  ctx.beginPath();
-  ctx.moveTo(x1 + wobbleSeeds[seedOffset] * 0.5, y1);
-
-  for (let i = 1; i <= segments; i++) {
-    const t = i / segments;
-    const x = x1 + (x2 - x1) * t + wobbleSeeds[(seedOffset + i) % 100] * 0.8;
-    const y = y1 + (y2 - y1) * t + wobbleSeeds[(seedOffset + i + 5) % 100] * 0.8;
-    ctx.lineTo(x, y);
+function drawCup(cupExt) {
+  // Ease toward the target height in 3px steps (few distinct sprites)
+  if (Math.abs(cupShownExt - cupExt) < 1.5) {
+    cupShownExt = cupExt;
+  } else {
+    cupShownExt += (cupExt - cupShownExt) * 0.22;
   }
-  ctx.stroke();
+  const shown = cupShownExt === cupExt ? cupExt : Math.round(cupShownExt / 3) * 3;
+
+  const sprite = getCupSprite(Cups.getActiveCupId(), shown);
+  ctx.drawImage(sprite.canvas, sprite.x, sprite.y, sprite.w, sprite.h);
+}
+
+// Snap the animated height (new run / menu) so it never grows on entry
+export function resetCupAnimation(cupExt) {
+  cupShownExt = cupExt || 0;
 }
 
 // ── Danger Line ─────────────────────────────────────────────────
@@ -342,13 +391,19 @@ function drawDangerLine(dangerLevel, cupExt) {
 }
 
 // ── Drop guide line ─────────────────────────────────────────────
+let dropLineGrad = null;
+let dropLineGradY = null;
+
 function drawDropLine(x, dropY) {
   ctx.save();
-  const grad = ctx.createLinearGradient(0, dropY + 20, 0, CUP_BOTTOM_Y);
-  grad.addColorStop(0, 'rgba(255,255,255,0.12)');
-  grad.addColorStop(1, 'rgba(255,255,255,0.02)');
+  if (!dropLineGrad || dropLineGradY !== dropY) {
+    dropLineGrad = ctx.createLinearGradient(0, dropY + 20, 0, CUP_BOTTOM_Y);
+    dropLineGrad.addColorStop(0, 'rgba(255,255,255,0.12)');
+    dropLineGrad.addColorStop(1, 'rgba(255,255,255,0.02)');
+    dropLineGradY = dropY;
+  }
   ctx.setLineDash([4, 8]);
-  ctx.strokeStyle = grad;
+  ctx.strokeStyle = dropLineGrad;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(x, dropY + 20);
@@ -363,12 +418,18 @@ function drawBalls(ballMap, gameState) {
   // Sort by y position so lower balls draw on top (depth feel)
   const sorted = [...ballMap.values()].sort((a, b) => a.body.position.y - b.body.position.y);
 
-  // Pass 1: soft contact shadows under every solid ball
+  // Pass 1: soft contact shadows under every solid ball — one path,
+  // one fill (overlapping shadows union instead of stacking darker)
+  ctx.fillStyle = 'rgba(4, 4, 18, 0.22)';
+  ctx.beginPath();
   for (const entry of sorted) {
     if (entry.isGhost) continue;
     const r = entry.isBomb ? 16 : BALL_TIERS[entry.tierIndex].radius;
-    drawBallShadow(entry.body, r);
+    const { x, y } = entry.body.position;
+    ctx.moveTo(x + r * 0.82, y + r * 0.85);
+    ctx.ellipse(x, y + r * 0.85, r * 0.82, r * 0.3, 0, 0, Math.PI * 2);
   }
+  ctx.fill();
 
   // Pass 2: the balls themselves
   for (const entry of sorted) {
@@ -380,16 +441,6 @@ function drawBalls(ballMap, gameState) {
       drawBall(entry.body, entry.tierIndex, gameState);
     }
   }
-}
-
-function drawBallShadow(body, r) {
-  const { x, y } = body.position;
-  ctx.save();
-  ctx.fillStyle = 'rgba(4, 4, 18, 0.22)';
-  ctx.beginPath();
-  ctx.ellipse(x, y + r * 0.85, r * 0.82, r * 0.3, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
 }
 
 function getSquishState(body) {
@@ -494,18 +545,71 @@ function drawBall(body, tierIndex, gameState) {
   ctx.rotate(body.angle - deformAngle);
 
   // ── Draw based on tier type ───────────────────────────────────
+  // The rainbow's animated gradient is drawn live; every other fruit
+  // is a cached sprite (see drawFruitSprite)
   if (tier.name === 'rainbow') {
     drawRainbowBall(r, body.id);
-  } else if (tier.name === 'dragonfruit') {
-    drawDragonfruitBall(r, body.id);
-  } else if (tier.name === 'grapefruit') {
-    drawGrapefruitBall(r, body.id);
   } else {
-    const style = Skins.getTierStyle(tierIndex);
-    drawSolidBall(r, style.color, style.stroke, tierIndex, body.id);
+    drawFruitSprite(tierIndex, r, body.id);
   }
 
   ctx.restore();
+}
+
+// ── Fruit sprite cache ──────────────────────────────────────────
+// Drawing a fruit from scratch is 2-3 Path2D builds, a couple of
+// clips and dozens of strokes. That's fine once; forty times a frame
+// on a phone it's the whole frame budget. Each fruit is rendered once
+// per boil frame into a small offscreen canvas at the current render
+// scale, then blitted with the ball's live squash/rotation transform.
+// Keyed by tier + ball id so per-fruit variation survives intact.
+const spriteCache = new Map();
+const SPRITE_PAD = 1.5; // stems/leaves/scales poke past the radius
+
+function renderFruitSprite(tierIndex, r, ballId, frame) {
+  const size = Math.ceil(r * SPRITE_PAD * 2 * renderScale);
+  const off = document.createElement('canvas');
+  off.width = size;
+  off.height = size;
+  const octx = off.getContext('2d');
+  octx.setTransform(renderScale, 0, 0, renderScale, size / 2, size / 2);
+
+  // Paint with the shared drawing code by pointing it at the offscreen
+  // context for the duration
+  const mainCtx = ctx;
+  const savedBoilT = boilT;
+  ctx = octx;
+  boilT = frame * 2.1;
+  const tier = BALL_TIERS[tierIndex];
+  if (tier.name === 'dragonfruit') {
+    drawDragonfruitBall(r, ballId);
+  } else if (tier.name === 'grapefruit') {
+    drawGrapefruitBall(r, ballId);
+  } else {
+    const style = Skins.getTierStyle(tierIndex);
+    drawSolidBall(r, style.color, style.stroke, tierIndex, ballId);
+  }
+  ctx = mainCtx;
+  boilT = savedBoilT;
+  return off;
+}
+
+// Draw the fruit centered on the current origin (caller has already
+// translated/rotated/scaled the context). ballId null = generic look.
+function drawFruitSprite(tierIndex, r, ballId, cacheKey) {
+  const key = cacheKey || `${tierIndex}:${ballId == null ? 'p' : ballId}:${r}`;
+  let frames = spriteCache.get(key);
+  if (!frames) {
+    frames = new Array(BOIL_FRAMES).fill(null);
+    spriteCache.set(key, frames);
+  }
+  let sprite = frames[boilFrame];
+  if (!sprite) {
+    sprite = renderFruitSprite(tierIndex, r, ballId, boilFrame);
+    frames[boilFrame] = sprite;
+  }
+  const half = sprite.width / renderScale / 2;
+  ctx.drawImage(sprite, -half, -half, half * 2, half * 2);
 }
 
 // ── Bomb Ball ───────────────────────────────────────────────────
@@ -630,13 +734,23 @@ function drawGhostBall(body, tierIndex) {
   ctx.restore();
 }
 
-// Clean up squish states for removed balls
-export function cleanupSquishStates(activeBallIds) {
+// Clean up squish states + cached sprites for removed balls.
+// `activeBalls` is the live Map<id, entry> from balls.js.
+export function cleanupSquishStates(activeBalls) {
+  if (ballSquish.size === 0) return;
+  let removed = null;
   for (const id of ballSquish.keys()) {
-    if (!activeBallIds.has(id)) {
+    if (!activeBalls.has(id)) {
       ballSquish.delete(id);
       ballHighlightCache.delete(id);
       ballLookCache.delete(id);
+      (removed || (removed = new Set())).add(String(id));
+    }
+  }
+  // Sprite keys are "tier:id:radius" — free the frames of removed balls
+  if (removed) {
+    for (const key of spriteCache.keys()) {
+      if (removed.has(key.split(':')[1])) spriteCache.delete(key);
     }
   }
 }
@@ -748,7 +862,7 @@ function outlineWidth(r) {
 function wobblyCirclePath(cx, cy, radius, seed, wobbleAmt = 0.02) {
   const path = new Path2D();
   const points = 32;
-  const t = Math.floor(performance.now() / 125) * 0.15;
+  const t = boilT;
   const phase = pseudoRand(seed) * Math.PI * 2;
   for (let i = 0; i <= points; i++) {
     const a = (i / points) * Math.PI * 2;
@@ -818,7 +932,7 @@ function angDist(a, b) {
 function wobblyApplePath(cx, cy, radius, seed) {
   const path = new Path2D();
   const points = 40;
-  const t = Math.floor(performance.now() / 125) * 0.15;
+  const t = boilT;
   const phase = pseudoRand(seed) * Math.PI * 2;
   const TOP = -Math.PI / 2;
   const BOT = Math.PI / 2;
@@ -1551,9 +1665,8 @@ function drawPreview(x, y, tierIndex, isDragging, isTouchDevice, bombQueued, gho
   } else if (ghostQueued) {
     // Ghostly preview — same ball but more transparent with dashed outline
     const tier = BALL_TIERS[tierIndex];
-    const style = Skins.getTierStyle(tierIndex);
     ctx.globalAlpha = 0.25 + Math.sin(performance.now() * 0.006) * 0.1;
-    drawSolidBall(tier.radius, style.color, style.stroke, tierIndex);
+    drawFruitSprite(tierIndex, tier.radius, null);
     ctx.setLineDash([4, 4]);
     ctx.strokeStyle = 'rgba(200,220,255,0.5)';
     ctx.lineWidth = 2;
@@ -1565,11 +1678,8 @@ function drawPreview(x, y, tierIndex, isDragging, isTouchDevice, bombQueued, gho
     const tier = BALL_TIERS[tierIndex];
     if (tier.color === 'rainbow') {
       drawRainbowBall(tier.radius);
-    } else if (tier.name === 'dragonfruit') {
-      drawDragonfruitBall(tier.radius);
     } else {
-      const style = Skins.getTierStyle(tierIndex);
-      drawSolidBall(tier.radius, style.color, style.stroke, tierIndex);
+      drawFruitSprite(tierIndex, tier.radius, null);
     }
   }
 
@@ -1776,15 +1886,27 @@ export function drawDecorBall(x, y, r, tierIndex, seed = 1) {
   ctx.rotate(tilt);
   if (tier.name === 'rainbow') {
     drawRainbowBall(r, seed);
-  } else if (tier.name === 'dragonfruit') {
-    drawDragonfruitBall(r, seed);
-  } else if (tier.name === 'grapefruit') {
-    drawGrapefruitBall(r, seed);
   } else {
-    const style = Skins.getTierStyle(tierIndex);
-    drawSolidBall(r, style.color, style.stroke, tierIndex, seed);
+    drawFruitSprite(tierIndex, r, seed, `${tierIndex}:d${seed}:${r}`);
   }
   ctx.restore();
+}
+
+// Cup thumbnail for the unlock shop — same painters as the real cup,
+// cached per style at the current render scale.
+export function drawCupThumb(styleId, x, y, w, h) {
+  const key = `thumb:${styleId}:${renderScale}`;
+  let sprite = cupCache.get(key);
+  if (!sprite) {
+    const wall = Math.max(3.5, w * 0.11);
+    sprite = CupArt.renderCup(styleId, {
+      leftX: wall + 2, rightX: w - wall - 2,
+      rimY: h * 0.12, bottomY: h - wall - 2,
+      baseExtra: w * 0.06, wall,
+    }, renderScale);
+    cupCache.set(key, sprite);
+  }
+  ctx.drawImage(sprite.canvas, x + sprite.x, y + sprite.y, sprite.w, sprite.h);
 }
 
 // ── Mute Button ─────────────────────────────────────────────────

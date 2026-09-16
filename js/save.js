@@ -18,6 +18,8 @@ const DEFAULT_SAVE = {
   gamesPlayed: 0,
   unlockedSkins: ['classic'],
   selectedSkin: 'classic',
+  unlockedCups: ['steel'],
+  selectedCup: 'steel',
   upgrades: { startCup: 0, discount: 0 },
   highScores: { classic: 0, rush: 0, zen: 0 },
   bestCombo: 0, // legacy single-value combo — migrated into bestCombos
@@ -80,9 +82,12 @@ function load() {
     persist();
   }
 
-  // The default skin must always be owned
+  // The default skin and cup must always be owned
   if (!save.unlockedSkins.includes('classic')) {
     save.unlockedSkins.unshift('classic');
+  }
+  if (!save.unlockedCups.includes('steel')) {
+    save.unlockedCups.unshift('steel');
   }
   return save;
 }
@@ -135,6 +140,29 @@ export function getSelectedSkin() {
 export function setSelectedSkin(id) {
   const doc = load();
   doc.selectedSkin = id;
+  persist();
+}
+
+// ── Cups ────────────────────────────────────────────────────────
+export function isCupUnlocked(id) {
+  return load().unlockedCups.includes(id);
+}
+
+export function unlockCup(id) {
+  const doc = load();
+  if (!doc.unlockedCups.includes(id)) {
+    doc.unlockedCups.push(id);
+    persist();
+  }
+}
+
+export function getSelectedCup() {
+  return load().selectedCup;
+}
+
+export function setSelectedCup(id) {
+  const doc = load();
+  doc.selectedCup = id;
   persist();
 }
 
