@@ -18,8 +18,19 @@ export function setUIHitTest(fn) {
   uiHitTest = fn;
 }
 
+// The canvas rect only changes on resize; reading it on every pointer
+// move forces a layout pass, which is jank on phones
+let cachedRect = null;
+function canvasRect() {
+  if (!cachedRect) cachedRect = canvas.getBoundingClientRect();
+  return cachedRect;
+}
+function invalidateRect() {
+  cachedRect = null;
+}
+
 function toLogical(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = canvasRect();
   return {
     x: (clientX - rect.left) * (logicalW / rect.width),
     y: (clientY - rect.top) * (logicalH / rect.height),
@@ -49,6 +60,16 @@ export function init(canvasEl, logicalWidth, logicalHeight) {
 
   // Detect touch support
   isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+  window.addEventListener('resize', invalidateRect);
+  window.addEventListener('orientationchange', invalidateRect);
+  window.addEventListener('scroll', invalidateRect, { passive: true });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', invalidateRect);
+    window.visualViewport.addEventListener('scroll', invalidateRect);
+  }
+  // The renderer resizes the canvas after these same events fire, so
+  // refresh lazily on the next pointer event rather than right now
 
   // ── Mouse events ──────────────────────────────────────────────
   canvas.addEventListener('mousemove', onMouseMove);
@@ -86,7 +107,7 @@ function clampToCup(x) {
 }
 
 function toLogicalX(clientX) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = canvasRect();
   const scaleX = logicalW / rect.width;
   return clampToCup((clientX - rect.left) * scaleX);
 }
@@ -101,7 +122,7 @@ export function setClampRadius(r) {
 // Unclamped game-space coordinates — used for UI hover (tooltips),
 // which needs to reach areas outside the cup's drop range.
 function updateHover(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
+  const rect = canvasRect();
   state.hoverX = (clientX - rect.left) * (logicalW / rect.width);
   state.hoverY = (clientY - rect.top) * (logicalH / rect.height);
 }

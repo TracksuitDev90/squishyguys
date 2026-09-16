@@ -18,7 +18,9 @@ import * as Store from './store.js';
 import * as Save from './save.js';
 import * as Menus from './menus.js';
 import * as Skins from './skins.js';
+import * as Cups from './cups.js';
 import * as Fever from './fever.js';
+import * as Perf from './perf.js';
 
 // ── State ───────────────────────────────────────────────────────
 let gameState = 'menu'; // 'menu' | 'shop' | 'playing' | 'gameover'
@@ -45,6 +47,11 @@ let touchTooltipAt = 0;
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
   const canvas = document.getElementById('game');
+  Perf.init();
+  // Particle budgets follow the adaptive quality level
+  const applyBudget = (s) => Particles.setBudget(s.particles, s.juice);
+  applyBudget(Perf.getSettings());
+  Perf.onChange((level, settings) => applyBudget(settings));
   Physics.init();
   Renderer.init(canvas);
   Input.init(canvas, GAME_WIDTH, GAME_HEIGHT);
@@ -179,6 +186,7 @@ function maybeSquirtJuice(merge, force = false) {
 
 // Live fruit outlines so juice can splash onto and run down them
 function refreshJuiceColliders() {
+  if (!Particles.hasJuice()) return;
   const list = [];
   for (const entry of Balls.getAll().values()) {
     if (entry.isGhost) continue;
@@ -323,6 +331,25 @@ function handleShopAction(hit) {
     return;
   }
 
+  if (hit.type === 'cup') {
+    if (Save.isCupUnlocked(hit.id)) {
+      if (Cups.selectCup(hit.id)) {
+        Renderer.applyTheme();
+        Audio.playDrop(3);
+      }
+    } else if (Cups.purchaseCup(hit.id)) {
+      Renderer.applyTheme();
+      Audio.playMerge(5, 2); // cha-ching
+      Particles.triggerShake(4);
+    }
+    return;
+  }
+
+  if (hit.type === 'tab') {
+    Audio.playDrop(1);
+    return;
+  }
+
   if (hit.type === 'upgrade') {
     if (Skins.purchaseUpgrade(hit.id)) {
       Audio.playMerge(5, 2);
@@ -410,8 +437,17 @@ let lastTime = 0;
 function loop(timestamp) {
   requestAnimationFrame(loop);
 
-  const delta = lastTime ? Math.min(timestamp - lastTime, 32) : 16.67;
+  const rawDelta = lastTime ? timestamp - lastTime : 16.67;
   lastTime = timestamp;
+  Perf.sample(rawDelta);
+  // Cap the catch-up so a stall (tab switch, GC pause) can't cascade
+  // into a spiral of ever more simulation per frame
+  const delta = Math.min(rawDelta, 50);
+
+  // Everything that moves runs in fixed 60 Hz slices — physics, juice,
+  // sparkles — so a phone rendering at 30 fps still plays at full
+  // speed instead of in slow motion
+  const simSteps = Physics.fixedSteps(delta);
 
   if (gameState === 'menu' || gameState === 'shop') {
     // Belt and suspenders with checkUIHit's consume-everything: no
@@ -468,7 +504,7 @@ function loop(timestamp) {
     }
 
     // Step physics
-    Physics.step(delta);
+    for (let i = 0; i < simSteps; i++) Physics.stepOnce();
 
     // Update bomb suck-in effect
     const bombResult = Balls.updateBombEffect();
@@ -552,7 +588,7 @@ function loop(timestamp) {
       endRun(false, 'time');
     }
   } else if (gameState === 'gameover') {
-    Physics.step(delta);
+    for (let i = 0; i < simSteps; i++) Physics.stepOnce();
     updateCoinTicks();
 
     if (Input.state.dropRequested) {
@@ -567,12 +603,11 @@ function loop(timestamp) {
 
   // Update particles (juice needs the current fruit layout to splash on)
   if (gameState === 'playing' || gameState === 'gameover') refreshJuiceColliders();
-  Particles.update();
+  for (let i = 0; i < simSteps; i++) Particles.update();
   Balls.cleanupEffects();
 
-  // Cleanup squish states for removed balls
-  const activeIds = new Set(Balls.getAll().keys());
-  Renderer.cleanupSquishStates(activeIds);
+  // Cleanup squish states + cached sprites for removed balls
+  Renderer.cleanupSquishStates(Balls.getAll());
 
   // Store tooltip: hover-driven on desktop, tap-driven (with expiry)
   // on touch — see checkUIHit's playing case for the touch flow.
@@ -699,6 +734,7 @@ function startGame(modeId) {
     Store.grantFreeCupExtensions(startCup);
     Physics.extendCup(Store.getCupExtendPx());
   }
+  Renderer.resetCupAnimation(Store.getCupExtendPx());
 
   currentDropTier = Balls.getNextDropTier();
   nextDropTier = Balls.getNextDropTier();
@@ -706,6 +742,7 @@ function startGame(modeId) {
   rushTimeLeftMs = MODES[modeId].timeLimitMs || 0;
   Save.incrementGamesPlayed();
   gameState = 'playing';
+  Perf.settle(1000);
   won = false;
   isNewBest = false;
   lastDropTime = performance.now();

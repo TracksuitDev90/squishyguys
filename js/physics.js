@@ -302,14 +302,34 @@ export function onFloorCollision(callback) {
 // ── Step ────────────────────────────────────────────────────────
 // Matter.js wants a fixed timestep — feeding it raw frame deltas makes
 // stacks jittery and behavior framerate-dependent. Accumulate real time
-// and step in fixed 60 Hz slices instead.
-const FIXED_DT = 1000 / 60;
+// and step in fixed 60 Hz slices instead. Returns how many slices ran
+// so the rest of the simulation (particles, juice) can take the same
+// steps and stay in real time when a phone drops to 30 fps.
+export const FIXED_DT = 1000 / 60;
+const MAX_STEPS = 3;
 let accumulator = 0;
 
-export function step(delta) {
-  accumulator = Math.min(accumulator + delta, FIXED_DT * 4);
-  while (accumulator >= FIXED_DT) {
-    Engine.update(engine, FIXED_DT);
+// Split a frame delta into fixed steps. The small tolerance means a
+// 60 Hz display always gets exactly one step per frame (rAF deltas
+// land a hair under 16.67 ms), instead of a skipped step every few
+// hundred frames that reads as a hitch.
+export function fixedSteps(delta) {
+  accumulator = Math.min(accumulator + delta, FIXED_DT * MAX_STEPS);
+  let steps = 0;
+  while (accumulator >= FIXED_DT - 0.5 && steps < MAX_STEPS) {
     accumulator -= FIXED_DT;
+    steps++;
   }
+  if (accumulator < 0) accumulator = 0;
+  return steps;
+}
+
+export function stepOnce() {
+  Engine.update(engine, FIXED_DT);
+}
+
+export function step(delta) {
+  const steps = fixedSteps(delta);
+  for (let i = 0; i < steps; i++) stepOnce();
+  return steps;
 }
