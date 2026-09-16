@@ -2,6 +2,7 @@
 // Players spend in-game points to buy power-ups.
 // The desc lines double as the in-run tooltip copy — keep them short,
 // concrete, and about what the player gets for their points.
+import { CUP_EXTEND_PX, MAX_CUP_EXTENSIONS } from './config.js';
 
 export const STORE_ITEMS = [
   {
@@ -34,7 +35,6 @@ let purchaseCounts = { colorBomb: 0, cupExtend: 0, ghostBall: 0 };
 let bombQueued = false; // next drop will be a bomb ball
 let ghostQueued = false; // next drop will be a ghost ball
 let cupExtensions = 0;
-const CUP_EXTEND_PX = 35; // how much each extension adds
 
 // Permanent HAGGLER upgrade: 0-0.3 price reduction, set by main.js at
 // run start. Survives reset() — it's re-applied every startGame anyway.
@@ -47,7 +47,17 @@ export function setDiscount(pct) {
 // Permanent TALL CUP upgrade: pre-grant extensions at run start without
 // charging or inflating the CUP+ price ladder.
 export function grantFreeCupExtensions(n) {
-  cupExtensions += n;
+  cupExtensions = Math.min(cupExtensions + n, MAX_CUP_EXTENSIONS);
+}
+
+// Why an item can't be bought right now (null = purchasable). A bomb or
+// ghost is a one-slot queue — buying a second while one is still waiting
+// to drop would just burn points — and the cup has a height ceiling.
+export function getBlockReason(itemId) {
+  if (itemId === 'colorBomb' && bombQueued) return 'queued';
+  if (itemId === 'ghostBall' && ghostQueued) return 'queued';
+  if (itemId === 'cupExtend' && cupExtensions >= MAX_CUP_EXTENSIONS) return 'maxed';
+  return null;
 }
 
 export function getPrice(itemId) {
@@ -59,12 +69,13 @@ export function getPrice(itemId) {
 }
 
 export function canAfford(itemId, currentScore) {
-  return currentScore >= getPrice(itemId);
+  return !getBlockReason(itemId) && currentScore >= getPrice(itemId);
 }
 
 export function purchase(itemId, currentScore) {
   const price = getPrice(itemId);
-  if (currentScore < price) return { success: false, cost: 0 };
+  if (getBlockReason(itemId)) return { success: false, cost: 0, reason: getBlockReason(itemId) };
+  if (currentScore < price) return { success: false, cost: 0, reason: 'points' };
 
   purchaseCounts[itemId] = (purchaseCounts[itemId] || 0) + 1;
 

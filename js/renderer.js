@@ -4,6 +4,7 @@ import {
   CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y,
   CUP_WALL_THICKNESS, CUP_BASE_EXTRA, DANGER_LINE_Y, DROP_Y,
   BALL_TIERS, INK, LEAF_GREEN,
+  FRUIT_HUE_JITTER, FRUIT_LIGHT_JITTER, FRUIT_SAT_JITTER,
 } from './config.js';
 import * as Particles from './particles.js';
 import * as Menus from './menus.js';
@@ -171,8 +172,9 @@ export function render(state) {
 
   if (state.gameState === 'playing') {
     if (!state.hasActiveGhost) {
-      drawPreview(state.previewX, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
-      drawDropLine(state.previewX);
+      const dropY = state.dropY != null ? state.dropY : DROP_Y;
+      drawPreview(state.previewX, dropY, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
+      drawDropLine(state.previewX, dropY);
     }
   }
 
@@ -182,9 +184,9 @@ export function render(state) {
   drawMuteButton(state.muted);
 
   if (state.gameState === 'playing') {
-    drawStoreButtons(state.storePrices, state.storeAffordable);
+    drawStoreButtons(state.storePrices, state.storeAffordable, state.storeBlocked);
     if (state.storeTooltip) {
-      drawStoreTooltip(state.storeTooltip, state.storeTooltipHint, state.storeAffordable);
+      drawStoreTooltip(state.storeTooltip, state.storeTooltipHint, state.storeAffordable, state.storeBlocked);
     }
   }
 
@@ -340,16 +342,16 @@ function drawDangerLine(dangerLevel, cupExt) {
 }
 
 // ── Drop guide line ─────────────────────────────────────────────
-function drawDropLine(x) {
+function drawDropLine(x, dropY) {
   ctx.save();
-  const grad = ctx.createLinearGradient(0, DROP_Y + 20, 0, CUP_BOTTOM_Y);
+  const grad = ctx.createLinearGradient(0, dropY + 20, 0, CUP_BOTTOM_Y);
   grad.addColorStop(0, 'rgba(255,255,255,0.12)');
   grad.addColorStop(1, 'rgba(255,255,255,0.02)');
   ctx.setLineDash([4, 8]);
   ctx.strokeStyle = grad;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(x, DROP_Y + 20);
+  ctx.moveTo(x, dropY + 20);
   ctx.lineTo(x, CUP_BOTTOM_Y);
   ctx.stroke();
   ctx.setLineDash([]);
@@ -634,6 +636,7 @@ export function cleanupSquishStates(activeBallIds) {
     if (!activeBallIds.has(id)) {
       ballSquish.delete(id);
       ballHighlightCache.delete(id);
+      ballLookCache.delete(id);
     }
   }
 }
@@ -670,6 +673,68 @@ function pseudoRand(seed) {
   let x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
 }
+
+// ── Per-fruit look variation ────────────────────────────────────
+// No two apples off the same tree match exactly. Each ball commits to
+// a small, seeded set of deviations — a nudge of hue, lightness and
+// saturation, a slightly different silhouette, how strong its blush
+// is, how many freckles it grew, which way its stem leans — all kept
+// small enough that a peach is still obviously a peach next to any
+// other peach. (Tier identity comes from size, base color, and the
+// topper; these only touch what's inside that.)
+const ballLookCache = new Map();
+function getBallLook(ballId) {
+  if (ballLookCache.has(ballId)) return ballLookCache.get(ballId);
+  const rnd = (k) => pseudoRand(ballId * 53 + k * 7.31) * 2 - 1; // -1..1
+  const look = {
+    hue: rnd(1) * FRUIT_HUE_JITTER,
+    light: rnd(2) * FRUIT_LIGHT_JITTER,
+    sat: rnd(3) * FRUIT_SAT_JITTER,
+    // Silhouette: a little taller or squatter, and a hair lopsided
+    aspect: 1 + rnd(4) * 0.035,
+    lean: rnd(5) * 0.05,
+    // Tint patch: size and how much lighter it prints
+    patchSize: 0.72 + pseudoRand(ballId * 53 + 6 * 7.31) * 0.14,
+    patchLift: 26 + pseudoRand(ballId * 53 + 7 * 7.31) * 14,
+    // Skin texture: blush strength, speckle density, stripe/crease phase
+    blush: 0.7 + pseudoRand(ballId * 53 + 8 * 7.31) * 0.6,
+    density: 0.75 + pseudoRand(ballId * 53 + 9 * 7.31) * 0.5,
+    phase: pseudoRand(ballId * 53 + 10 * 7.31),
+    flip: pseudoRand(ballId * 53 + 11 * 7.31) > 0.5 ? -1 : 1,
+    // Topper: stem/leaf lean
+    tilt: rnd(12) * 0.22,
+    fillCacheKey: null,
+    fillCacheVal: null,
+  };
+  ballLookCache.set(ballId, look);
+  return look;
+}
+
+// Apply a look's color drift to a base hex fill (cached per base color
+// so a skin swap re-derives it but a normal frame never re-parses)
+function lookFill(look, fill) {
+  if (look.fillCacheKey === fill) return look.fillCacheVal;
+  const rgb = hexToRgb(fill);
+  let out = fill;
+  if (rgb) {
+    const hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    const h = (hsl.h + look.hue + 360) % 360;
+    const sat = Math.max(0, Math.min(100, hsl.s + look.sat));
+    const l = Math.max(0, Math.min(100, hsl.l + look.light));
+    const o = hslToRgb(h, sat, l);
+    out = `#${toHex2(o.r)}${toHex2(o.g)}${toHex2(o.b)}`;
+  }
+  look.fillCacheKey = fill;
+  look.fillCacheVal = out;
+  return out;
+}
+
+// Neutral look for balls without an id (preview, decor)
+const DEFAULT_LOOK = {
+  hue: 0, light: 0, sat: 0, aspect: 1, lean: 0,
+  patchSize: 0.78, patchLift: 32, blush: 1, density: 1, phase: 0.5,
+  flip: 1, tilt: 0, fillCacheKey: null, fillCacheVal: null,
+};
 
 // Uniform ink linework: thin on small fruits, capped so the biggest
 // don't turn into coloring-book blobs.
@@ -791,6 +856,7 @@ function wobblyApplePath(cx, cy, radius, seed) {
 // only shading, then details tucked under a uniform ink outline.
 function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   const seed = ballId != null ? ballId : 7;
+  const look = ballId != null ? getBallLook(ballId) : DEFAULT_LOOK;
   const wobbleAmt = 0.02 + tierIndex * 0.0012;
   const detailMode = Skins.getDetailMode();
   // Apples get a real apple silhouette (fruit skin only — palette-swap
@@ -800,8 +866,14 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
     ? wobblyApplePath(0, 0, r, seed)
     : wobblyCirclePath(0, 0, r, seed, wobbleAmt);
 
-  // Flat fill — no gradients anywhere in this style
-  ctx.fillStyle = fill;
+  // Each fruit's own proportions: a touch taller/squatter, a hair lopsided
+  ctx.save();
+  ctx.transform(look.aspect, look.lean, 0, 1 / look.aspect, 0, 0);
+
+  // Flat fill — no gradients anywhere in this style — in this fruit's
+  // own shade of the tier color
+  const fillVaried = lookFill(look, fill);
+  ctx.fillStyle = fillVaried;
   ctx.fill(body);
 
   // Offset tint patch — the misregistered-print shading from the
@@ -810,14 +882,14 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
   const oy = -r * (0.26 + pseudoRand(seed * 5) * 0.1);
   ctx.save();
   ctx.clip(body);
-  ctx.fillStyle = lightenColor(fill, 32);
-  ctx.fill(wobblyCirclePath(ox, oy, r * 0.78, seed + 11, 0.05));
+  ctx.fillStyle = lightenColor(fillVaried, look.patchLift);
+  ctx.fill(wobblyCirclePath(ox, oy, r * look.patchSize, seed + 11, 0.05));
   ctx.restore();
 
   // Skin texture goes under the outline so pores/stripes tuck beneath it.
   // Non-fruit skins swap the stems/stripes for their own detail pass.
   if (detailMode === 'fruit') {
-    drawFruitSkin(tierIndex, r, ballId);
+    drawFruitSkin(tierIndex, r, ballId, look);
   } else if (detailMode === 'gloss') {
     drawCandyGloss(r, seed);
   }
@@ -832,8 +904,9 @@ function drawSolidBall(r, fill, stroke, tierIndex, ballId) {
 
   // Stems, leaves, and crowns sit on top (and may poke past the edge)
   if (detailMode === 'fruit') {
-    drawFruitTopper(tierIndex, r);
+    drawFruitTopper(tierIndex, r, look);
   }
+  ctx.restore();
 }
 
 // Generic sheen for non-fruit skins — a curved candy shine band,
@@ -864,9 +937,10 @@ function drawCandyGloss(r, seed) {
 // Everything is drawn in ball-local space, so it squishes, spins,
 // and wobbles along with the ball — that's the charm.
 
-function drawFruitSkin(tierIndex, r, ballId) {
+function drawFruitSkin(tierIndex, r, ballId, look = DEFAULT_LOOK) {
   const name = BALL_TIERS[tierIndex].name;
   const seed = (ballId != null ? ballId : 7) * 101;
+  const { blush, density, phase, flip } = look;
 
   ctx.save();
   // Keep skin texture inside the ball body
@@ -880,7 +954,8 @@ function drawFruitSkin(tierIndex, r, ballId) {
       ctx.strokeStyle = hexWithAlpha(INK, 0.35);
       ctx.lineCap = 'round';
       ctx.lineWidth = r * 0.05;
-      for (let i = 0; i < 6; i++) {
+      const hatches = Math.round(6 * density);
+      for (let i = 0; i < hatches; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = (0.2 + pseudoRand(seed + i * 5) * 0.6) * r;
         const x = Math.cos(a) * d;
@@ -896,38 +971,41 @@ function drawFruitSkin(tierIndex, r, ballId) {
       break;
     }
     case 'peach': {
-      // Suture crease — the classic peach cleft down the cheek
+      // Suture crease — the classic peach cleft down the cheek; which
+      // cheek, and how deep the bow, is this peach's own
+      const bow = 0.34 + phase * 0.16;
       ctx.strokeStyle = hexWithAlpha(INK, 0.4);
       ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(r * 0.05, -r * 0.9);
-      ctx.quadraticCurveTo(r * 0.42, 0, r * 0.05, r * 0.9);
+      ctx.moveTo(flip * r * 0.05, -r * 0.9);
+      ctx.quadraticCurveTo(flip * r * bow, 0, flip * r * 0.05, r * 0.9);
       ctx.stroke();
       // Soft pink blush on the sun-kissed side
-      ctx.fillStyle = 'rgba(240, 100, 130, 0.4)';
+      ctx.fillStyle = `rgba(240, 100, 130, ${0.4 * blush})`;
       ctx.beginPath();
-      ctx.ellipse(-r * 0.3, r * 0.18, r * 0.42, r * 0.32, -0.35, 0, Math.PI * 2);
+      ctx.ellipse(-flip * r * 0.3, r * 0.18, r * 0.42, r * 0.32, -0.35 * flip, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
     case 'apple': {
       // Warm golden blush low on the sun-catching cheek — real apples
-      // are never one flat red
-      ctx.fillStyle = 'rgba(255, 190, 80, 0.28)';
+      // are never one flat red (and some are far more golden than others)
+      ctx.fillStyle = `rgba(255, 190, 80, ${0.28 * blush})`;
       ctx.beginPath();
-      ctx.ellipse(-r * 0.28, r * 0.3, r * 0.44, r * 0.34, 0.4, 0, Math.PI * 2);
+      ctx.ellipse(-flip * r * 0.28, r * 0.3, r * 0.44, r * 0.34, 0.4 * flip, 0, Math.PI * 2);
       ctx.fill();
       // Deeper red flush up near the shoulder
-      ctx.fillStyle = 'rgba(150, 20, 40, 0.22)';
+      ctx.fillStyle = `rgba(150, 20, 40, ${0.22 * (2 - blush)})`;
       ctx.beginPath();
-      ctx.ellipse(r * 0.34, -r * 0.28, r * 0.42, r * 0.34, -0.3, 0, Math.PI * 2);
+      ctx.ellipse(flip * r * 0.34, -r * 0.28, r * 0.42, r * 0.34, -0.3 * flip, 0, Math.PI * 2);
       ctx.fill();
       // Darker streaks arcing pole to pole, varied per apple
       ctx.strokeStyle = 'rgba(120, 20, 35, 0.32)';
       ctx.lineCap = 'round';
-      for (let i = 0; i < 5; i++) {
-        const lon = -0.62 + i * 0.3 + (pseudoRand(seed + i * 13) - 0.5) * 0.12;
+      const streaks = 4 + Math.round(density * 1.2);
+      for (let i = 0; i < streaks; i++) {
+        const lon = -0.62 + i * (1.24 / Math.max(1, streaks - 1)) + (pseudoRand(seed + i * 13) - 0.5) * 0.12;
         const top = -0.82 + pseudoRand(seed + i * 17) * 0.22;
         const bot = 0.55 + pseudoRand(seed + i * 19) * 0.3;
         ctx.lineWidth = r * (0.03 + pseudoRand(seed + i * 23) * 0.035);
@@ -938,7 +1016,8 @@ function drawFruitSkin(tierIndex, r, ballId) {
       }
       // Pale freckle lenticels, denser than before
       ctx.fillStyle = 'rgba(255, 224, 200, 0.4)';
-      for (let i = 0; i < 9; i++) {
+      const freckles = Math.round(9 * density);
+      for (let i = 0; i < freckles; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.82;
         ctx.beginPath();
@@ -951,7 +1030,8 @@ function drawFruitSkin(tierIndex, r, ballId) {
     case 'lemon': {
       // Dimpled peel — plain ink pore dots
       ctx.fillStyle = hexWithAlpha(INK, 0.55);
-      for (let i = 0; i < 8; i++) {
+      const pores = Math.round(8 * density);
+      for (let i = 0; i < pores; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.85;
         ctx.beginPath();
@@ -963,7 +1043,8 @@ function drawFruitSkin(tierIndex, r, ballId) {
     case 'orange': {
       // Rind pores — ink dots, varied in size
       ctx.fillStyle = hexWithAlpha(INK, 0.45);
-      for (let i = 0; i < 10; i++) {
+      const pores = Math.round(10 * density);
+      for (let i = 0; i < pores; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.85;
         ctx.beginPath();
@@ -974,17 +1055,20 @@ function drawFruitSkin(tierIndex, r, ballId) {
       break;
     }
     case 'watermelon': {
-      // Dark wavy rind stripes converging at the poles — flat solid
+      // Dark wavy rind stripes converging at the poles — flat solid.
+      // The wiggle pattern and stripe weight are this melon's own.
       ctx.strokeStyle = '#14503a';
       ctx.lineCap = 'round';
+      const wavePhase = phase * Math.PI * 2;
+      const stripeW = 0.85 + density * 0.2;
       for (const lon of [-0.62, -0.21, 0.21, 0.62]) {
-        ctx.lineWidth = r * (0.15 - Math.abs(lon) * 0.05);
+        ctx.lineWidth = r * (0.15 - Math.abs(lon) * 0.05) * stripeW;
         ctx.beginPath();
         const steps = 14;
         for (let s = 0; s <= steps; s++) {
           const t = (s / steps) * 2 - 1;                 // -1 top pole → 1 bottom
           const bulge = Math.sqrt(Math.max(1 - t * t, 0));
-          const wave = Math.sin(t * 7 + lon * 20) * r * 0.045;
+          const wave = Math.sin(t * 7 + lon * 20 + wavePhase) * r * 0.045;
           const x = (lon * r * 1.35 + wave) * bulge;
           const y = t * r * 0.96;
           if (s === 0) ctx.moveTo(x, y);
@@ -1010,8 +1094,9 @@ function drawFruitSkin(tierIndex, r, ballId) {
     }
     case 'blueberry': {
       // A few flat pale bloom dots (the tint patch is the frost)
-      ctx.fillStyle = 'rgba(220, 232, 255, 0.5)';
-      for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = `rgba(220, 232, 255, ${0.5 * blush})`;
+      const blooms = 2 + Math.round(density * 1.5);
+      for (let i = 0; i < blooms; i++) {
         const a = pseudoRand(seed + i * 3) * Math.PI * 2;
         const d = Math.sqrt(pseudoRand(seed + i * 5)) * r * 0.7;
         ctx.beginPath();
@@ -1021,28 +1106,35 @@ function drawFruitSkin(tierIndex, r, ballId) {
       break;
     }
     case 'grape': {
-      // Thin ink crescent along the lower-right rim suggests roundness
+      // Thin ink crescent along the lower rim suggests roundness; a
+      // touch of dusty bloom on some grapes
       ctx.strokeStyle = hexWithAlpha(INK, 0.3);
       ctx.lineWidth = r * 0.05;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(0, 0, r * 0.8, 0.4, 1.5);
+      ctx.arc(0, 0, r * 0.8, 0.4 + phase * 0.3, 1.5 + phase * 0.3);
       ctx.stroke();
+      if (blush > 1) {
+        ctx.fillStyle = `rgba(230, 220, 250, ${(blush - 1) * 0.35})`;
+        ctx.beginPath();
+        ctx.ellipse(-r * 0.15, r * 0.25, r * 0.4, r * 0.28, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
       break;
     }
     case 'plum': {
       // Flat blush patch on one cheek
-      ctx.fillStyle = 'rgba(220, 90, 110, 0.35)';
+      ctx.fillStyle = `rgba(220, 90, 110, ${0.35 * blush})`;
       ctx.beginPath();
-      ctx.ellipse(r * 0.35, r * 0.15, r * 0.4, r * 0.3, 0.3, 0, Math.PI * 2);
+      ctx.ellipse(flip * r * 0.35, r * 0.15, r * 0.4, r * 0.3, 0.3 * flip, 0, Math.PI * 2);
       ctx.fill();
-      // Cleft crease from pole to pole
+      // Cleft crease from pole to pole (on the far cheek from the blush)
       ctx.strokeStyle = hexWithAlpha(INK, 0.45);
       ctx.lineWidth = r * 0.06;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(-r * 0.06, -r * 0.94);
-      ctx.quadraticCurveTo(-r * 0.42, 0, -r * 0.06, r * 0.94);
+      ctx.moveTo(-flip * r * 0.06, -r * 0.94);
+      ctx.quadraticCurveTo(-flip * r * (0.36 + phase * 0.12), 0, -flip * r * 0.06, r * 0.94);
       ctx.stroke();
       break;
     }
@@ -1050,8 +1142,12 @@ function drawFruitSkin(tierIndex, r, ballId) {
   ctx.restore();
 }
 
-function drawFruitTopper(tierIndex, r) {
+function drawFruitTopper(tierIndex, r, look = DEFAULT_LOOK) {
   const name = BALL_TIERS[tierIndex].name;
+
+  // Stems and leaves lean a little differently on every fruit
+  ctx.save();
+  ctx.rotate(look.tilt);
 
   switch (name) {
     case 'coconut': {
@@ -1221,20 +1317,26 @@ function drawFruitTopper(tierIndex, r) {
       break;
     }
   }
+  ctx.restore();
 }
 
 // ── Dragon Fruit Ball (vivid pink, green-tipped scales) ─────────
 function drawDragonfruitBall(r, ballId) {
   const seed = ballId != null ? ballId : 8;
+  const look = ballId != null ? getBallLook(ballId) : DEFAULT_LOOK;
   const body = wobblyCirclePath(0, 0, r, seed, 0.022);
+  const pink = lookFill(look, '#E44D8D');
+
+  ctx.save();
+  ctx.transform(look.aspect, look.lean, 0, 1 / look.aspect, 0, 0);
 
   // Flat pink body + offset tint patch, same recipe as the fruits
-  ctx.fillStyle = '#E44D8D';
+  ctx.fillStyle = pink;
   ctx.fill(body);
   ctx.save();
   ctx.clip(body);
-  ctx.fillStyle = lightenColor('#E44D8D', 32);
-  ctx.fill(wobblyCirclePath(-r * 0.26, -r * 0.28, r * 0.78, seed + 11, 0.05));
+  ctx.fillStyle = lightenColor(pink, look.patchLift);
+  ctx.fill(wobblyCirclePath(-r * 0.26, -r * 0.28, r * look.patchSize, seed + 11, 0.05));
   ctx.restore();
 
   // Uniform ink outline
@@ -1255,16 +1357,21 @@ function drawDragonfruitBall(r, ballId) {
     { a: 3.0,   d: 0.45, s: 0.95 },
     { a: 0.2,   d: 0.12, s: 0.9 },
   ];
+  // Each fruit's scales sit at their own rotation and grow a bit
+  // bigger or smaller
+  const scaleSpin = look.tilt * 1.5;
+  const scaleGrow = 0.9 + look.density * 0.12;
   for (const sc of scales) {
     drawDragonfruitScale(
-      Math.cos(sc.a) * r * sc.d,
-      Math.sin(sc.a) * r * sc.d,
-      r * 0.34 * sc.s,
-      sc.a
+      Math.cos(sc.a + scaleSpin) * r * sc.d,
+      Math.sin(sc.a + scaleSpin) * r * sc.d,
+      r * 0.34 * sc.s * scaleGrow,
+      sc.a + scaleSpin
     );
   }
 
   drawShineTicks(r, seed);
+  ctx.restore();
 }
 
 // One curved leaf flap, pointing outward along `angle`
@@ -1304,14 +1411,19 @@ function drawDragonfruitScale(x, y, len, angle) {
 // stays visible on the lit side: outside AND inside at once.
 function drawGrapefruitBall(r, ballId) {
   const seed = ballId != null ? ballId : 12;
+  const look = ballId != null ? getBallLook(ballId) : DEFAULT_LOOK;
   const body = wobblyCirclePath(0, 0, r, seed, 0.02);
+  const peel = lookFill(look, '#FF8E62');
+
+  ctx.save();
+  ctx.transform(look.aspect, look.lean, 0, 1 / look.aspect, 0, 0);
 
   // Peel — warm orange-pink, with the usual offset tint patch
-  ctx.fillStyle = '#FF8E62';
+  ctx.fillStyle = peel;
   ctx.fill(body);
   ctx.save();
   ctx.clip(body);
-  ctx.fillStyle = lightenColor('#FF8E62', 30);
+  ctx.fillStyle = lightenColor(peel, look.patchLift);
   ctx.fill(wobblyCirclePath(-r * 0.26, -r * 0.28, r * 0.8, seed + 11, 0.05));
   ctx.restore();
 
@@ -1331,7 +1443,7 @@ function drawGrapefruitBall(r, ballId) {
   ctx.save();
   ctx.clip(flesh);
   // Segment wedges — pith-colored spokes dividing the flesh
-  const segs = 9;
+  const segs = 8 + Math.round(look.density);
   const segPhase = pseudoRand(seed * 3) * Math.PI * 2;
   ctx.strokeStyle = '#FFEBDD';
   ctx.lineCap = 'round';
@@ -1371,6 +1483,7 @@ function drawGrapefruitBall(r, ballId) {
   ctx.stroke(body);
 
   drawShineTicks(r, seed);
+  ctx.restore();
 }
 
 // ── Rainbow Ball ────────────────────────────────────────────────
@@ -1421,8 +1534,7 @@ function drawRainbowBall(r, ballId) {
 }
 
 // ── Preview Ball ────────────────────────────────────────────────
-function drawPreview(x, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQueued) {
-  const y = DROP_Y;
+function drawPreview(x, y, tierIndex, isDragging, isTouchDevice, bombQueued, ghostQueued) {
 
   // On touch: show bigger, more visible preview while dragging
   const baseAlpha = isDragging ? 0.7 : 0.45;
@@ -1740,13 +1852,15 @@ function drawGameOver(state) {
 
   if (won) {
     // Rainbow win - cycling colors
+    // Sits a little higher than GAME OVER so the subtitle clears the
+    // NEW BEST! line below it
     ctx.font = 'bold 42px "Patrick Hand", cursive';
     ctx.fillStyle = `hsl(${(time * 60) % 360}, 85%, 65%)`;
-    ctx.fillText('RAINBOW!', cx, cy - 80);
+    ctx.fillText('RAINBOW!', cx, cy - 96);
 
     ctx.font = '24px "Patrick Hand", cursive';
     ctx.fillStyle = '#FFD700';
-    ctx.fillText('You did it!', cx, cy - 44);
+    ctx.fillText('You did it!', cx, cy - 62);
   } else {
     ctx.font = 'bold 42px "Patrick Hand", cursive';
     // Subtle pulse
@@ -1924,12 +2038,13 @@ function drawStoreButtonIcon(id, cx, cy, s, iconRGB, alpha) {
   ctx.restore();
 }
 
-function drawStoreButtons(prices, affordable) {
+function drawStoreButtons(prices, affordable, blocked) {
   if (!prices) return;
 
   for (const btn of STORE_BUTTONS) {
     const price = prices[btn.id];
     const canBuy = affordable[btn.id];
+    const block = blocked ? blocked[btn.id] : null;
     const { accent, icon, label } = STORE_BTN_STYLE[btn.id];
 
     ctx.save();
@@ -1962,13 +2077,22 @@ function drawStoreButtons(prices, affordable) {
     ctx.textAlign = 'left';
     ctx.fillText(label, chipX + chip + 6, btn.y + 19);
 
-    // Price, right-aligned and quieter
+    // Price, right-aligned and quieter — or why it can't be bought:
+    // a bomb/ghost already waiting to drop, or a cup at full height
     ctx.textAlign = 'right';
     ctx.font = '11px "Patrick Hand", cursive';
-    ctx.fillStyle = canBuy
-      ? 'rgba(255, 255, 255, 0.75)'
-      : 'rgba(255, 255, 255, 0.25)';
-    ctx.fillText(`${price}`, btn.x + btn.w - 10, btn.y + 19);
+    if (block === 'queued') {
+      ctx.fillStyle = `rgba(${accent}, 0.7)`;
+      ctx.fillText('SET', btn.x + btn.w - 10, btn.y + 19);
+    } else if (block === 'maxed') {
+      ctx.fillStyle = 'rgba(255, 215, 0, 0.6)';
+      ctx.fillText('MAX', btn.x + btn.w - 10, btn.y + 19);
+    } else {
+      ctx.fillStyle = canBuy
+        ? 'rgba(255, 255, 255, 0.75)'
+        : 'rgba(255, 255, 255, 0.25)';
+      ctx.fillText(`${price}`, btn.x + btn.w - 10, btn.y + 19);
+    }
 
     ctx.restore();
   }
@@ -1996,7 +2120,7 @@ function wrapText(text, maxWidth) {
   return lines;
 }
 
-function drawStoreTooltip(itemId, showBuyHint, affordable) {
+function drawStoreTooltip(itemId, showBuyHint, affordable, blocked) {
   const btn = STORE_BUTTONS.find(b => b.id === itemId);
   const item = STORE_ITEMS.find(i => i.id === itemId);
   if (!btn || !item) return;
@@ -2009,8 +2133,10 @@ function drawStoreTooltip(itemId, showBuyHint, affordable) {
   ctx.font = '13px "Patrick Hand", cursive';
   const lines = wrapText(item.desc, w - pad * 2);
   const canBuy = affordable && affordable[itemId];
-  const hint = showBuyHint
-    ? (canBuy ? 'tap again to buy' : 'not enough points yet')
+  const block = blocked ? blocked[itemId] : null;
+  const hint = block === 'queued' ? 'already loaded — drop it first'
+    : block === 'maxed' ? 'cup is as tall as it goes'
+    : showBuyHint ? (canBuy ? 'tap again to buy' : 'not enough points yet')
     : null;
   const h = 30 + lines.length * lineH + (hint ? 18 : 6);
 
@@ -2065,7 +2191,8 @@ function drawStoreTooltip(itemId, showBuyHint, affordable) {
   // Touch hint
   if (hint) {
     ctx.font = '12px "Patrick Hand", cursive';
-    ctx.fillStyle = canBuy ? 'rgba(46, 204, 113, 0.85)' : 'rgba(255, 190, 90, 0.75)';
+    ctx.fillStyle = canBuy ? 'rgba(46, 204, 113, 0.85)'
+      : block ? 'rgba(200, 210, 230, 0.7)' : 'rgba(255, 190, 90, 0.75)';
     ctx.fillText(hint, x + pad, y + h - 8);
   }
 
@@ -2099,6 +2226,45 @@ function darkenColor(hex, amount) {
   const rgb = hexToRgb(hex);
   if (!rgb) return hex;
   return `rgb(${Math.max(0, rgb.r - amount)},${Math.max(0, rgb.g - amount)},${Math.max(0, rgb.b - amount)})`;
+}
+
+function toHex2(v) {
+  return Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+}
+
+// h: 0-360, s/l: 0-100
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0;
+  let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return { h, s: s * 100, l: l * 100 };
+}
+
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = (h % 360) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp < 1) { r = c; g = x; }
+  else if (hp < 2) { r = x; g = c; }
+  else if (hp < 3) { g = c; b = x; }
+  else if (hp < 4) { g = x; b = c; }
+  else if (hp < 5) { r = x; b = c; }
+  else { r = c; b = x; }
+  const m = l - c / 2;
+  return { r: (r + m) * 255, g: (g + m) * 255, b: (b + m) * 255 };
 }
 
 function hexToRgb(hex) {
