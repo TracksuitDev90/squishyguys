@@ -82,7 +82,9 @@ function setup() {
       Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
       Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
       maybeSquirtJuice(merge);
-      Audio.playMerge(merge.tierIndex, Score.combo);
+      // The newborn fruit's instrument plays the hit, in key with the
+      // band; combos climb the chord on the beat grid
+      Music.onMerge(merge.tierIndex, Score.combo);
       Input.hapticMerge(merge.tierIndex);
       Music.bumpActivity();
 
@@ -414,6 +416,22 @@ function updateDangerLevel() {
   dangerLevel = Math.min(maxDanger, 1);
   Particles.setDangerLevel(dangerLevel);
   Audio.updateDangerHum(dangerLevel);
+  Music.setDanger(dangerLevel);
+}
+
+// ── Music Band Line-up ──────────────────────────────────────────
+// Every fruit tier is an instrument in the soundtrack; count what's
+// sitting in the cup so the band plays exactly those parts.
+const bandCounts = new Array(BALL_TIERS.length).fill(0);
+
+function syncMusicBand() {
+  bandCounts.fill(0);
+  for (const entry of Balls.getAll().values()) {
+    if (entry.isBomb || entry.isGhost || entry.tierIndex < 0) continue;
+    if (entry.body.isMerging) continue;
+    bandCounts[entry.tierIndex]++;
+  }
+  Music.setCupContents(bandCounts);
 }
 
 // Zen has no game over: a ball that lingers above the line gently
@@ -520,7 +538,7 @@ function loop(timestamp) {
         seamAngle: bombResult.seamAngle, sourceTier: bombResult.sourceTier,
         sourceRadius: bombResult.sourceRadius,
       }, true);
-      Audio.playMerge(bombResult.tier, 3);
+      Music.onMerge(bombResult.tier, 3);
       Input.hapticMerge(8);
       Music.bumpActivity(0.3);
       Particles.triggerShake(12);
@@ -532,12 +550,15 @@ function loop(timestamp) {
     // music.js) surge it during heavy merging even at low combo
     Music.setIntensity(Math.min(1,
       Score.combo / 6 + (Fever.isActive() ? 0.5 : Fever.getMeter() * 0.25)));
+    // The band's line-up is whatever fruit are in the cup right now
+    syncMusicBand();
 
     // Fever meter tick + start/end transitions
     const feverEvents = Fever.update(delta);
     if (feverEvents.started) {
       Audio.playFeverStart();
       Audio.setFeverActive(true);
+      Music.setFever(true);
       Particles.setFeverActive(true);
       Particles.triggerShake(10);
       Input.hapticWin();
@@ -545,6 +566,7 @@ function loop(timestamp) {
     if (feverEvents.ended) {
       Audio.playFeverEnd();
       Audio.setFeverActive(false);
+      Music.setFever(false);
       Particles.setFeverActive(false);
     }
 
@@ -554,6 +576,7 @@ function loop(timestamp) {
     } else {
       dangerLevel = 0;
       Particles.setDangerLevel(0);
+      Music.setDanger(0);
       zenOverflowRelief();
     }
 
@@ -572,7 +595,7 @@ function loop(timestamp) {
           Score.addPoints(500);
           Particles.emitMerge(rb.x, rb.y, RAINBOW_TIER, 5);
           Particles.emitScorePopup(rb.x, rb.y, 500, 1);
-          Audio.playWin();
+          // The rainbow merge already played the band's fanfare
           Input.hapticWin();
         }
       } else {
