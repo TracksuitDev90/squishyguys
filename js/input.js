@@ -49,6 +49,7 @@ export const state = {
   dragStartX: 0,           // where touch started
   pointerDown: false,      // raw pointer-down state
   uiConsumed: false,       // set true when a UI element consumes the input
+  pressStartedAt: 0,       // performance.now() when the current/last press began
   hoverX: -1,              // raw (unclamped) pointer position in game space,
   hoverY: -1,              // -1 while the cursor is off the canvas (touch stays -1)
 };
@@ -135,6 +136,10 @@ function onMouseMove(e) {
 }
 
 function onMouseDown(e) {
+  // Only the primary button drops — a right-click opening the (blocked)
+  // context menu shouldn't spend a fruit
+  if (e.button !== 0) return;
+  state.pressStartedAt = performance.now();
   state.pointerX = toLogicalX(e.clientX);
   state.pointerDown = true;
   state.pointerActive = true;
@@ -156,6 +161,9 @@ function onTouchStart(e) {
   const touch = e.touches[0];
   const x = toLogicalX(touch.clientX);
 
+  // Drops fire on release, so remember when this press began: a finger
+  // that was already down when the run ended must not restart it
+  state.pressStartedAt = performance.now();
   state.pointerX = x;
   state.pointerActive = true;
   state.isDragging = true;

@@ -6,6 +6,7 @@ import {
   BALL_RESTITUTION, BALL_FRICTION, BALL_DENSITY,
   BALL_TIERS,
 } from './config.js';
+import * as Clock from './clock.js';
 
 const { Engine, World, Bodies, Body, Events, Composite } = Matter;
 
@@ -157,7 +158,7 @@ export function createBallBody(x, y, tierIndex) {
   // Custom properties
   body.tierIndex = tierIndex;
   body.isMerging = false;
-  body.createdAt = performance.now();
+  body.createdAt = Clock.now();
   body.aboveDangerSince = null;
 
   Composite.add(engine.world, body);
@@ -176,7 +177,7 @@ export function createBombBody(x, y) {
   body.isBomb = true;
   body.tierIndex = -1;
   body.isMerging = false;
-  body.createdAt = performance.now();
+  body.createdAt = Clock.now();
   body.aboveDangerSince = null;
 
   Composite.add(engine.world, body);
@@ -196,7 +197,7 @@ export function createGhostBody(x, y, tierIndex) {
   body.tierIndex = tierIndex;
   body.isMerging = false;
   body.isGhost = true;
-  body.createdAt = performance.now();
+  body.createdAt = Clock.now();
   body.aboveDangerSince = null;
   Composite.add(engine.world, body);
   return body;

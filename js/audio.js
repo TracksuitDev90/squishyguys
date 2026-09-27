@@ -31,11 +31,55 @@ function ensureContext() {
     masterGain.gain.value = muted ? 0 : 0.3;
     masterGain.connect(audioCtx.destination);
   }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+  // 'interrupted' is iOS after a call/Siri/alarm; both need a resume.
+  // Never fight the page-hidden suspend below, though.
+  if ((audioCtx.state === 'suspended' || audioCtx.state === 'interrupted') &&
+      !document.hidden) {
+    audioCtx.resume().catch(() => {});
   }
   return audioCtx;
 }
+
+// ── Unlock & lifecycle ──────────────────────────────────────────
+// Mobile browsers only let audio start inside a user *activation*:
+// touchend / click / keydown count, touchstart does not. The game makes
+// its first sounds on touchstart (menu buttons), so main.js calls this
+// from release events too. On iOS a silent one-sample buffer is the
+// reliable way to wake the output; afterwards this is a cheap no-op
+// (it also re-wakes a context iOS suspended during a phone call).
+let unlocked = false;
+
+export function unlock() {
+  const ctx = ensureContext();
+  if (!ctx || (unlocked && ctx.state === 'running')) return;
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = ctx.createBuffer(1, 1, 22050);
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch {
+    // Some engines reject a start before resume settles — the next
+    // release event tries again
+  }
+  if (ctx.state === 'running') unlocked = true;
+}
+
+// Background the app → silence everything (the danger hum would
+// otherwise drone on over the home screen). The context's clock stops
+// too, so the music scheduler resumes exactly where it left off.
+let suspendedForHidden = false;
+document.addEventListener('visibilitychange', () => {
+  if (!audioCtx) return;
+  if (document.hidden) {
+    if (audioCtx.state === 'running') {
+      suspendedForHidden = true;
+      audioCtx.suspend().catch(() => {});
+    }
+  } else if (suspendedForHidden) {
+    suspendedForHidden = false;
+    audioCtx.resume().catch(() => {});
+  }
+});
 
 export function setMuted(value) {
   muted = !!value;
@@ -222,11 +266,20 @@ export function playBombSuck() {
 }
 
 // ── Bounce sound: soft impact when balls collide with walls ─────
+// A pile settling can report a dozen wall hits in one step; a fresh
+// oscillator for each is wasted work on a phone and just reads as
+// noise. One thud per short window is plenty.
+const BOUNCE_MIN_GAP_SEC = 0.045;
+let lastBounceAt = -1;
+
 export function playBounce(speed) {
+  if (speed < 2) return; // Only play for significant impacts
   const ctx = ensureContext();
-  if (!ctx || speed < 2) return; // Only play for significant impacts
+  if (!ctx) return;
 
   const now = ctx.currentTime;
+  if (now - lastBounceAt < BOUNCE_MIN_GAP_SEC) return;
+  lastBounceAt = now;
   const vol = Math.min(speed * 0.02, 0.15);
 
   const osc = ctx.createOscillator();

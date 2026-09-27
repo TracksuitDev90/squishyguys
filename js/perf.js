@@ -23,9 +23,13 @@ const LEVELS = [
 const STORAGE_KEY = 'squishyfruit_quality_v1';
 
 // Frame budget: step down when frames are consistently slower than a
-// solid 45 fps, step back up only after a long stretch well under 60.
+// solid 45 fps; step back up after a long stretch of holding the
+// display's refresh. UP_MS sits just above a 60 Hz frame (16.7 ms):
+// it used to be 14 ms, which only a 120 Hz screen can ever reach, so a
+// 60 Hz phone that dropped a level once (Low Power Mode, a hot phone,
+// a busy background app) stayed blurry forever — the level is saved.
 const DOWN_MS = 22;
-const UP_MS = 14;
+const UP_MS = 17.8;
 const DOWN_WINDOW_MS = 2500;  // a single confetti-heavy merge is shorter than this
 const UP_WINDOW_MS = 20000;
 const MIN_CHANGE_GAP_MS = 5000;
@@ -40,8 +44,11 @@ let slowAccum = 0;
 let fastAccum = 0;
 let lastChangeAt = 0;
 let ema = 16.7;
-let frozen = false; // true while a screen transition is settling
+let frozenUntil = 0; // ignore samples until then (screen transitions)
 let upgradesLeft = MAX_UPGRADES;
+// Never climb back to a level this session already had to leave — that
+// would just bounce between the two
+let upgradeCeiling = 0;
 
 export function init() {
   try {
@@ -61,12 +68,6 @@ export function getSettings() {
   return LEVELS[level];
 }
 
-// Render scale to use for the canvas backing store
-export function getRenderScale() {
-  const dpr = window.devicePixelRatio || 1;
-  return Math.min(dpr, LEVELS[level].maxScale);
-}
-
 export function onChange(fn) {
   listeners.push(fn);
 }
@@ -74,6 +75,7 @@ export function onChange(fn) {
 function setLevel(next) {
   next = Math.max(0, Math.min(LEVELS.length - 1, next));
   if (next === level) return;
+  if (next > level) upgradeCeiling = Math.max(upgradeCeiling, level + 1);
   level = next;
   lastChangeAt = performance.now();
   slowAccum = 0;
@@ -83,14 +85,16 @@ function setLevel(next) {
 }
 
 // Ignore frame times for a moment (screen change, sprite cache warmup)
+// (Overlapping calls extend the window; the old boolean + timeout let
+// the first timeout unfreeze a later, longer settle early.)
 export function settle(ms = 800) {
-  frozen = true;
-  setTimeout(() => { frozen = false; slowAccum = 0; }, ms);
+  frozenUntil = Math.max(frozenUntil, performance.now() + ms);
+  slowAccum = 0;
 }
 
 // Call once per frame with the raw (uncapped) frame delta in ms.
 export function sample(rawDelta) {
-  if (frozen) return;
+  if (performance.now() < frozenUntil) return;
   // Tab switches and debugger pauses produce huge deltas — not our problem
   if (rawDelta > 250 || rawDelta <= 0) return;
   ema = ema * 0.9 + rawDelta * 0.1;
@@ -105,13 +109,15 @@ export function sample(rawDelta) {
   } else if (ema < UP_MS) {
     fastAccum += rawDelta;
     slowAccum = 0;
-    if (fastAccum > UP_WINDOW_MS && level > 0 && upgradesLeft > 0) {
+    if (fastAccum > UP_WINDOW_MS && level > upgradeCeiling && upgradesLeft > 0) {
       upgradesLeft--;
       setLevel(level - 1);
     }
   } else {
+    // In between: bleed off slowness, and just pause the healthy-time
+    // count — resetting it here meant any real phone's odd dropped
+    // frame restarted the 20 s window, so it could never climb back
     slowAccum = Math.max(0, slowAccum - rawDelta * 0.5);
-    fastAccum = 0;
   }
 }
 
