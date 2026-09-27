@@ -4,6 +4,7 @@ import {
   DANGER_LINE_Y, DANGER_DURATION_MS, DROP_Y,
 } from './config.js';
 import * as Physics from './physics.js';
+import * as Clock from './clock.js';
 
 // All active balls: Map<body.id, { body, tierIndex }>
 const activeBalls = new Map();
@@ -256,8 +257,8 @@ function triggerBombEffect(bombEntry, targetEntry) {
     targets,
     centerX: midX,
     centerY: midY,
-    startTime: performance.now(),
-    suckDuration: 450, // ms to suck in
+    startTime: Clock.now(),
+    suckDuration: 450, // ms of game time to suck in
   };
 }
 
@@ -265,8 +266,7 @@ function triggerBombEffect(bombEntry, targetEntry) {
 export function updateBombEffect() {
   if (!activeBombEffect) return null;
 
-  const now = performance.now();
-  const elapsed = now - activeBombEffect.startTime;
+  const elapsed = Clock.now() - activeBombEffect.startTime;
   const progress = Math.min(elapsed / activeBombEffect.suckDuration, 1);
   const { targets, centerX, centerY, targetTier } = activeBombEffect;
 
@@ -287,6 +287,7 @@ export function updateBombEffect() {
   if (progress >= 1) {
     const pairs = Math.floor(targets.length / 2);
     let totalPoints = 0;
+    let merged = 0;
 
     for (let i = 0; i < pairs; i++) {
       const a = targets[i * 2];
@@ -294,6 +295,7 @@ export function updateBombEffect() {
       if (!activeBalls.has(a.id) || !activeBalls.has(b.id)) continue;
       const merge = performMerge([a.body, b.body], targetTier);
       totalPoints += merge.points;
+      merged++;
     }
 
     // Anything not consumed (the odd ball out, or a pair whose partner
@@ -316,6 +318,7 @@ export function updateBombEffect() {
 
     const result = {
       points: totalPoints,
+      merges: merged, // pairs that actually merged (feeds the coin payout)
       tier: nextTierFrom(targetTier),
       x: centerX,
       y: centerY,
@@ -390,7 +393,7 @@ function performMerge(bodies, tierIndex) {
 // dangerY can be passed in to account for cup extensions.
 export function findExpiredDangerBall(dangerY) {
   const effectiveDangerY = dangerY != null ? dangerY : DANGER_LINE_Y;
-  const now = performance.now();
+  const now = Clock.now();
   for (const [, entry] of activeBalls) {
     const { body } = entry;
     if (body.isMerging) continue;

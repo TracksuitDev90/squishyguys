@@ -17,11 +17,19 @@ export function setMode(m) {
   mode = m;
 }
 
-export function addPoints(points) {
+// Combo multiplier caps here — a 9-chain pays the same rate as a 5-chain
+export const MAX_COMBO_MULT = 5;
+
+export function comboMultiplier() {
+  return Math.min(Math.max(combo, 1), MAX_COMBO_MULT);
+}
+
+// A merge (or `merges` merges at once, e.g. a bomb). Advances the combo
+// and returns the points actually banked, so popups show the real number.
+export function addPoints(points, merges = 1) {
   combo++;
-  mergeCount++;
-  const comboMultiplier = Math.min(combo, 5);
-  const earned = points * comboMultiplier;
+  mergeCount += merges;
+  const earned = points * comboMultiplier();
   current += earned;
   currentComboPoints += earned;
 
@@ -41,6 +49,15 @@ export function addPoints(points) {
     currentComboPoints = 0;
     combo = 0;
   }, 1000);
+  return earned;
+}
+
+// Flat points that aren't a merge — the rainbow bonus, a zen overflow
+// pop. They don't ride (or extend) the combo and don't count toward the
+// merge-based coin payout.
+export function addBonus(points) {
+  current += points;
+  return points;
 }
 
 // Module namespace properties are read-only from the outside,

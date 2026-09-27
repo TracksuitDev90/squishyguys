@@ -55,9 +55,17 @@ const BOIL_MS = 125;
 let boilFrame = 0;
 let boilT = 0;
 
+// Fixed 60 Hz simulation steps taken since the last frame (main.js).
+// Springs and drifts advance per step, not per frame, so the jelly
+// wobbles at the same speed on a 30 fps phone, a 60 Hz laptop and a
+// 120 Hz display (where half the frames have no step at all).
+let frameSteps = 1;
+
 export function init(canvasEl) {
   canvas = canvasEl;
-  ctx = canvas.getContext('2d');
+  // Opaque: every frame paints the full background, so the compositor
+  // can skip blending the canvas with the page — free fill-rate on phones
+  ctx = canvas.getContext('2d', { alpha: false });
 
   for (let i = 0; i < DUST_COUNT; i++) {
     dustMotes.push({
@@ -87,24 +95,55 @@ export function init(canvasEl) {
   }
 }
 
+// iOS Safari holds on to a canvas's pixel memory until the element is
+// garbage collected, and caps total canvas memory per page — a long zen
+// run churning through fruit sprites can hit that cap and blank the
+// game. Zeroing the size hands the memory back immediately.
+function releaseCanvas(c) {
+  if (c) { c.width = 0; c.height = 0; }
+}
+
+function clearSpriteCache() {
+  for (const frames of spriteCache.values()) frames.forEach(releaseCanvas);
+  spriteCache.clear();
+}
+
+function clearCupCache() {
+  for (const sprite of cupCache.values()) releaseCanvas(sprite.canvas);
+  cupCache.clear();
+}
+
 // Rebuild the cached background gradients and sprite caches — call
 // after a skin/theme/cup change so the new look takes effect at once.
 export function applyTheme() {
   buildStaticGradients();
   buildLayers();
-  spriteCache.clear();
-  cupCache.clear();
+  clearSpriteCache();
+  clearCupCache();
 }
+
+// ── Render scale ────────────────────────────────────────────────
+// The backing store is sized to the pixels the canvas actually covers
+// on screen: (CSS size / game size) x devicePixelRatio. A 360px-wide
+// 3x Android gets ~1080px instead of a fixed 1200 (a fifth fewer
+// pixels to fill every frame), and a desktop window showing the game
+// at 1.4x gets a sharp image instead of an upscaled blur. The quality
+// level caps the DPR part; the total is capped so a big tablet can't
+// allocate a monster backing store.
+const MAX_RENDER_SCALE = 3;
+let qualityMaxDpr = 3;
+let cssW = GAME_WIDTH;
+let scaleChosen = false;
 
 function applyQuality(settings) {
   dustEnabled = settings.dust;
-  const next = Math.min(window.devicePixelRatio || 1, settings.maxScale);
-  if (next !== renderScale) {
-    renderScale = next;
-    spriteCache.clear();
-    cupCache.clear();
-    if (canvas) handleResize();
-  }
+  qualityMaxDpr = settings.maxScale;
+  if (canvas) handleResize();
+}
+
+function targetRenderScale() {
+  const dpr = Math.min(window.devicePixelRatio || 1, qualityMaxDpr);
+  return Math.max(1, Math.min(MAX_RENDER_SCALE, (cssW / GAME_WIDTH) * dpr));
 }
 
 // Offscreen canvas at the current render scale covering the game area
@@ -124,6 +163,9 @@ const LAYER_PAD = 30;
 
 function buildLayers() {
   if (!bgGradient) buildStaticGradients();
+  if (bgLayer) releaseCanvas(bgLayer.canvas);
+  if (vignetteLayer) releaseCanvas(vignetteLayer.canvas);
+
   const bg = makeLayer(LAYER_PAD);
   bg.ctx.fillStyle = bgGradient;
   bg.ctx.fillRect(-LAYER_PAD, -LAYER_PAD, GAME_WIDTH + LAYER_PAD * 2, GAME_HEIGHT + LAYER_PAD * 2);
@@ -177,11 +219,24 @@ function buildStaticGradients() {
   feverGlowGradient.addColorStop(1, 'rgba(255, 90, 20, 0)');
 }
 
+// Safe-area padding lives on <body> (see index.html) so notches and the
+// home indicator never cover the HUD; the canvas fits inside it.
+function bodyInsets() {
+  const cs = getComputedStyle(document.body);
+  return {
+    x: (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0),
+    y: (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0),
+  };
+}
+
+// Mobile browsers fire resize events in bursts (URL bar, rotation,
+// visual viewport). Reassigning canvas.width reallocates the backing
+// store and wipes every layer, so only touch what actually changed.
 function handleResize() {
-  const dpr = renderScale;
   const vv = window.visualViewport;
-  const maxW = vv ? vv.width : window.innerWidth;
-  const maxH = vv ? vv.height : window.innerHeight;
+  const inset = bodyInsets();
+  const maxW = Math.max(1, (vv ? vv.width : window.innerWidth) - inset.x);
+  const maxH = Math.max(1, (vv ? vv.height : window.innerHeight) - inset.y);
 
   const aspect = GAME_WIDTH / GAME_HEIGHT;
   let w, h;
@@ -192,18 +247,41 @@ function handleResize() {
     h = maxH;
     w = maxH * aspect;
   }
-
+  w = Math.floor(w);
+  h = Math.floor(h);
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  canvas.width = Math.round(GAME_WIDTH * dpr);
-  canvas.height = Math.round(GAME_HEIGHT * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  buildLayers();
+  cssW = w;
+
+  // Snap to quarter steps, and ignore drift under 0.2 so a URL bar
+  // wiggle can't throw away every cached sprite
+  const raw = targetRenderScale();
+  let layersDirty = !bgLayer;
+  if (!scaleChosen || Math.abs(raw - renderScale) >= 0.2) {
+    const next = Math.max(1, Math.round(raw * 4) / 4);
+    scaleChosen = true;
+    if (next !== renderScale) {
+      renderScale = next;
+      clearSpriteCache();
+      clearCupCache();
+      layersDirty = true;
+    }
+  }
+
+  const bw = Math.round(GAME_WIDTH * renderScale);
+  const bh = Math.round(GAME_HEIGHT * renderScale);
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;
+    canvas.height = bh;
+  }
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+  if (layersDirty) buildLayers();
 }
 
 // ── Main Render ─────────────────────────────────────────────────
 export function render(state) {
   const shake = Particles.getScreenShake();
+  frameSteps = state.simSteps != null ? state.simSteps : 1;
 
   // Which of the cached hand-drawn "boil" frames is showing right now
   boilFrame = Math.floor(performance.now() / BOIL_MS) % BOIL_FRAMES;
@@ -248,6 +326,7 @@ export function render(state) {
       drawPreview(state.previewX, dropY, state.previewTier, state.isDragging, state.isTouchDevice, state.bombQueued, state.ghostQueued);
       drawDropLine(state.previewX, dropY);
     }
+    if (state.nextTier != null) drawNextBubble(state.nextTier);
   }
 
   drawScore(state.score, state.bestScore, state.combo);
@@ -261,6 +340,9 @@ export function render(state) {
       drawStoreTooltip(state.storeTooltip, state.storeTooltipHint, state.storeAffordable, state.storeBlocked);
     }
   }
+
+  // Unlock banners ride above the HUD, never behind the store buttons
+  Particles.drawOverlay(ctx);
 
   if (state.gameState === 'gameover') {
     drawGameOver(state);
@@ -280,8 +362,8 @@ function drawBackground() {
   const t = performance.now() * 0.001;
   ctx.fillStyle = '#cfe0ff';
   for (const m of dustMotes) {
-    m.y -= m.speed;
-    m.x += m.drift + Math.sin(t + m.phase) * 0.08;
+    m.y -= m.speed * frameSteps;
+    m.x += (m.drift + Math.sin(t + m.phase) * 0.08) * frameSteps;
     if (m.y < -4) { m.y = GAME_HEIGHT + 4; m.x = Math.random() * GAME_WIDTH; }
     if (m.x < -4) m.x = GAME_WIDTH + 4;
     if (m.x > GAME_WIDTH + 4) m.x = -4;
@@ -339,25 +421,58 @@ function getCupSprite(styleId, cupExt) {
       rimY: CUP_TOP_Y - cupExt - 20, bottomY: CUP_BOTTOM_Y,
       baseExtra: CUP_BASE_EXTRA, wall: CUP_WALL_THICKNESS,
     }, renderScale);
-    // The grow animation passes through a few intermediate heights;
-    // keep the cache small so they don't pile up
-    if (cupCache.size >= 6) cupCache.delete(cupCache.keys().next().value);
+    // Keep the cache small (a few heights, plus shop thumbnails)
+    if (cupCache.size >= 6) {
+      const oldest = cupCache.keys().next().value;
+      releaseCanvas(cupCache.get(oldest).canvas);
+      cupCache.delete(oldest);
+    }
     cupCache.set(key, sprite);
   }
   return sprite;
 }
 
+// Game-space y where the grow animation splits the cup (well inside
+// the walls at any height: below the tallest rim's travel, above the floor)
+const CUP_SPLIT_Y = 470;
+
 function drawCup(cupExt) {
-  // Ease toward the target height in 3px steps (few distinct sprites)
-  if (Math.abs(cupShownExt - cupExt) < 1.5) {
+  // Ease toward the target height (the cup only ever grows mid-run)
+  if (cupExt < cupShownExt || Math.abs(cupShownExt - cupExt) < 0.5) {
     cupShownExt = cupExt;
   } else {
-    cupShownExt += (cupExt - cupShownExt) * 0.22;
+    cupShownExt += (cupExt - cupShownExt) * (1 - Math.pow(0.78, frameSteps));
   }
-  const shown = cupShownExt === cupExt ? cupExt : Math.round(cupShownExt / 3) * 3;
 
-  const sprite = getCupSprite(Cups.getActiveCupId(), shown);
-  ctx.drawImage(sprite.canvas, sprite.x, sprite.y, sprite.w, sprite.h);
+  // Only the final height is ever painted (a cup paint is 30-50 ms on a
+  // phone — the old per-height sprites stuttered every CUP+). While it
+  // grows, the upper walls and rim slide down over the lower walls by
+  // however far the rim still has to rise.
+  const sprite = getCupSprite(Cups.getActiveCupId(), cupExt);
+  const c = sprite.canvas;
+  const k = c.width / sprite.w; // sprite pixels per game unit
+  const dPx = Math.round((cupExt - cupShownExt) * k);
+  if (dPx <= 0) {
+    ctx.drawImage(c, sprite.x, sprite.y, sprite.w, sprite.h);
+    return;
+  }
+  const splitPx = Math.round((CUP_SPLIT_Y - sprite.y) * k);
+  // The walls flare outward toward the base, so the sliding part also
+  // spreads sideways by the flare it skips — left half left, right half
+  // right — or the walls kink where the two parts meet
+  const rimY = CUP_TOP_Y - cupExt - 20;
+  const spread = (CUP_BASE_EXTRA / (CUP_BOTTOM_Y - rimY)) * (dPx / k);
+  const midPx = Math.round(((CUP_LEFT_X + CUP_RIGHT_X) / 2 - sprite.x) * k);
+  const topY = sprite.y + dPx / k;
+  ctx.drawImage(c, 0, 0, midPx, splitPx,
+                sprite.x - spread, topY, midPx / k, splitPx / k);
+  ctx.drawImage(c, midPx, 0, c.width - midPx, splitPx,
+                sprite.x + midPx / k + spread, topY, (c.width - midPx) / k, splitPx / k);
+  const botPx = splitPx + dPx;
+  if (botPx < c.height) {
+    ctx.drawImage(c, 0, botPx, c.width, c.height - botPx,
+                  sprite.x, sprite.y + botPx / k, sprite.w, (c.height - botPx) / k);
+  }
 }
 
 // Snap the animated height (new run / menu) so it never grows on entry
@@ -472,7 +587,7 @@ function drawBall(body, tierIndex, gameState) {
 
   if (sq.spawnProgress < 1) {
     // ── Spawn scale-up animation ────────────────────────────────
-    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
+    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08 * frameSteps, 1);
     const t = easeOutBack(sq.spawnProgress);
     sx = t;
     sy = t;
@@ -493,26 +608,33 @@ function drawBall(body, tierIndex, gameState) {
 
     // Impact detection: a sudden velocity change means we hit something.
     // Kick the squash spring proportionally, along the incoming direction.
-    const dvx = vx - sq.prevVx;
-    const dvy = vy - sq.prevVy;
-    const impact = Math.sqrt(dvx * dvx + dvy * dvy);
-    const prevSpeed = Math.sqrt(sq.prevVx * sq.prevVx + sq.prevVy * sq.prevVy);
+    // (Only on frames where the physics actually stepped — on a 120 Hz
+    // display every other frame has no new velocity to react to.)
+    if (frameSteps > 0) {
+      const dvx = vx - sq.prevVx;
+      const dvy = vy - sq.prevVy;
+      const impact = Math.sqrt(dvx * dvx + dvy * dvy);
+      const prevSpeed = Math.sqrt(sq.prevVx * sq.prevVx + sq.prevVy * sq.prevVy);
 
-    if (impact > 1.2 && prevSpeed > 1.4) {
-      sq.squash = Math.min(sq.squash + impact * 0.050 * goo, 0.50);
-      sq.deformAngle = Math.atan2(sq.prevVy, sq.prevVx);
-    } else if (speed > 0.6) {
-      // While moving freely, deform along the direction of travel
-      sq.deformAngle = Math.atan2(vy, vx);
+      if (impact > 1.2 && prevSpeed > 1.4) {
+        sq.squash = Math.min(sq.squash + impact * 0.050 * goo, 0.50);
+        sq.deformAngle = Math.atan2(sq.prevVy, sq.prevVx);
+      } else if (speed > 0.6) {
+        // While moving freely, deform along the direction of travel
+        sq.deformAngle = Math.atan2(vy, vx);
+      }
     }
 
     // Damped spring: overshoots past rest into a stretch, then settles —
     // that overshoot IS the jelly wobble. Gooier balls = looser spring.
+    // Integrated once per simulation step so it runs in real time.
     const stiffness = tierIndex <= 3 ? 0.145 + tierIndex * 0.018 : 0.20;
     const damping = tierIndex <= 3 ? 0.80 : 0.72;
-    sq.squashVel += -sq.squash * stiffness;
-    sq.squashVel *= damping;
-    sq.squash += sq.squashVel;
+    for (let i = 0; i < frameSteps; i++) {
+      sq.squashVel += -sq.squash * stiffness;
+      sq.squashVel *= damping;
+      sq.squash += sq.squashVel;
+    }
 
     // Free-fall stretch: elongate along the motion vector
     const stretch = Math.min(speed * 0.012 * goo, 0.24);
@@ -612,21 +734,27 @@ function drawFruitSprite(tierIndex, r, ballId, cacheKey) {
   ctx.drawImage(sprite, -half, -half, half * 2, half * 2);
 }
 
+// Pop-in scale for bomb/ghost balls, advanced per simulation step
+function settleSpawnScale(sq) {
+  if (sq.spawnProgress < 1) {
+    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08 * frameSteps, 1);
+    const t = easeOutBack(sq.spawnProgress);
+    sq.scaleX = t;
+    sq.scaleY = t;
+  } else {
+    const k = 1 - Math.pow(0.85, frameSteps);
+    sq.scaleX += (1 - sq.scaleX) * k;
+    sq.scaleY += (1 - sq.scaleY) * k;
+  }
+}
+
 // ── Bomb Ball ───────────────────────────────────────────────────
 function drawBombBall(body) {
   const { x, y } = body.position;
   const r = 16;
   const sq = getSquishState(body);
 
-  if (sq.spawnProgress < 1) {
-    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
-    const t = easeOutBack(sq.spawnProgress);
-    sq.scaleX = t;
-    sq.scaleY = t;
-  } else {
-    sq.scaleX += (1 - sq.scaleX) * 0.15;
-    sq.scaleY += (1 - sq.scaleY) * 0.15;
-  }
+  settleSpawnScale(sq);
 
   ctx.save();
   ctx.translate(x, y);
@@ -697,15 +825,7 @@ function drawGhostBall(body, tierIndex) {
   const r = tier.radius;
   const sq = getSquishState(body);
 
-  if (sq.spawnProgress < 1) {
-    sq.spawnProgress = Math.min(sq.spawnProgress + 0.08, 1);
-    const t = easeOutBack(sq.spawnProgress);
-    sq.scaleX = t;
-    sq.scaleY = t;
-  } else {
-    sq.scaleX += (1 - sq.scaleX) * 0.15;
-    sq.scaleY += (1 - sq.scaleY) * 0.15;
-  }
+  settleSpawnScale(sq);
 
   ctx.save();
   ctx.translate(x, y);
@@ -750,7 +870,10 @@ export function cleanupSquishStates(activeBalls) {
   // Sprite keys are "tier:id:radius" — free the frames of removed balls
   if (removed) {
     for (const key of spriteCache.keys()) {
-      if (removed.has(key.split(':')[1])) spriteCache.delete(key);
+      if (removed.has(key.split(':')[1])) {
+        spriteCache.get(key).forEach(releaseCanvas);
+        spriteCache.delete(key);
+      }
     }
   }
 }
@@ -1701,6 +1824,37 @@ function drawPreview(x, y, tierIndex, isDragging, isTouchDevice, bombQueued, gho
   }
 }
 
+// ── Next-fruit bubble ───────────────────────────────────────────
+// The drop queue always knew the fruit after this one; showing it is
+// what lets a player plan a merge instead of just reacting. Sits in the
+// free strip right of the cup, below the store row.
+const NEXT_BUBBLE = { x: 374, y: 190, r: 18 };
+
+function drawNextBubble(tierIndex) {
+  const { x, y, r } = NEXT_BUBBLE;
+  const tier = BALL_TIERS[tierIndex];
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = '11px "Patrick Hand", cursive';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('NEXT', x, y - r - 6);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Same cached sprite as the aim preview, shrunk to fit the bubble
+  const fit = Math.min(1, (r - 4) / tier.radius);
+  ctx.translate(x, y);
+  ctx.scale(fit, fit);
+  drawFruitSprite(tierIndex, tier.radius, null);
+  ctx.restore();
+}
+
 // ── Score Display ───────────────────────────────────────────────
 function drawScore(score, bestScore, combo) {
   ctx.save();
@@ -2019,7 +2173,8 @@ function drawGameOver(state) {
   ctx.fillText(`Best: ${(bestScore || 0).toLocaleString()}`, cx, cy + 38);
   if (bestCombo > 0) {
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.fillText(`Best Combo: ${bestCombo.toLocaleString()}`, cx, cy + 62);
+    // A combo's record is the points it chained, not its length
+    ctx.fillText(`Best Combo: ${bestCombo.toLocaleString()} pts`, cx, cy + 62);
   }
 
   // Coin payout ceremony: count up over 1.2s, then rest

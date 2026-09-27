@@ -172,8 +172,11 @@ export function emitMerge(x, y, tierIndex, comboCount) {
   triggerShake(shakeAmount);
 }
 
+// `points` is what was actually banked (combo multiplier already
+// applied), so the popup always matches the jump in the score; the
+// combo only drives how loud the popup looks.
 export function emitScorePopup(x, y, points, comboCount) {
-  const text = comboCount > 1 ? `+${points} x${comboCount}` : `+${points}`;
+  const text = `+${points.toLocaleString()}`;
   scorePopups.push({
     x: x + (Math.random() - 0.5) * 20,
     y: y - 10,
@@ -456,6 +459,11 @@ export function draw(ctx) {
   drawConfetti(ctx);
   drawScorePopups(ctx);
   drawSpawnPops(ctx);
+}
+
+// UI-layer effects, drawn by the renderer after the HUD and store
+// buttons so a banner can never end up hidden behind them
+export function drawOverlay(ctx) {
   drawUnlockFlashes(ctx);
 }
 
@@ -563,7 +571,12 @@ function drawSpawnPops(ctx) {
   ctx.restore();
 }
 
+// Banner row sits just under the store buttons (which end at y=140)
+// and above the drop line; simultaneous unlocks stack downward.
+const UNLOCK_BANNER_Y = 172;
+
 function drawUnlockFlashes(ctx) {
+  let row = 0;
   for (const f of unlockFlashes) {
     if (f.life < 0.5) continue; // only show in first half
 
@@ -573,8 +586,8 @@ function drawUnlockFlashes(ctx) {
     ctx.textAlign = 'center';
     ctx.font = `bold 24px "Patrick Hand", cursive`;
 
-    // Slide in from top
-    const yPos = 135 + progress * 5;
+    // Gentle slide down as it fades
+    const yPos = UNLOCK_BANNER_Y + row++ * 28 + progress * 5;
 
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillText(`${f.name} UNLOCKED!`, GAME_WIDTH / 2 + 1, yPos + 1);

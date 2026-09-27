@@ -15,13 +15,49 @@
   <link rel="manifest" href="manifest.webmanifest">
   <title>Squishy Fruit</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2255%22 r=%2240%22 fill=%22%232ECC71%22 stroke=%22%2327AE60%22 stroke-width=%224%22/><ellipse cx=%2238%22 cy=%2240%22 rx=%2212%22 ry=%227%22 fill=%22white%22 opacity=%220.5%22/></svg>">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
-  <!-- Hand-drawn font -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+  <!-- Everything the game needs is same-origin and requested up front.
+       The hand-drawn font is self-hosted (a third-party stylesheet in
+       <head> blocks first paint — on a bad connection, or where Google
+       Fonts is unreachable, the page sat blank until it timed out), and
+       every module is preloaded so the browser fetches them in parallel
+       instead of discovering them one import level at a time. -->
+  <link rel="preload" href="fonts/patrick-hand-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <script defer src="js/vendor/matter.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+  <link rel="modulepreload" href="js/compat.js">
+  <link rel="modulepreload" href="js/config.js">
+  <link rel="modulepreload" href="js/clock.js">
+  <link rel="modulepreload" href="js/physics.js">
+  <link rel="modulepreload" href="js/balls.js">
+  <link rel="modulepreload" href="js/renderer.js">
+  <link rel="modulepreload" href="js/cupart.js">
+  <link rel="modulepreload" href="js/particles.js">
+  <link rel="modulepreload" href="js/menus.js">
+  <link rel="modulepreload" href="js/input.js">
+  <link rel="modulepreload" href="js/score.js">
+  <link rel="modulepreload" href="js/save.js">
+  <link rel="modulepreload" href="js/audio.js">
+  <link rel="modulepreload" href="js/music.js">
+  <link rel="modulepreload" href="js/song.js">
+  <link rel="modulepreload" href="js/store.js">
+  <link rel="modulepreload" href="js/skins.js">
+  <link rel="modulepreload" href="js/cups.js">
+  <link rel="modulepreload" href="js/fever.js">
+  <link rel="modulepreload" href="js/perf.js">
 
   <style>
+    /* Patrick Hand (SIL OFL 1.1 — see fonts/OFL.txt), latin subset.
+       swap: text draws at once in the fallback and upgrades when ready. */
+    @font-face {
+      font-family: 'Patrick Hand';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url(fonts/patrick-hand-latin.woff2) format('woff2');
+    }
+
     * {
       margin: 0;
       padding: 0;
@@ -38,11 +74,14 @@
       -webkit-touch-callout: none;
       -webkit-user-select: none;
       user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
 
     /* Pin the play area to the visual viewport and center the canvas —
        keeps the game truly fullscreen on mobile (no rubber-banding,
-       no gap when browser chrome collapses) */
+       no gap when browser chrome collapses). The safe-area padding keeps
+       the HUD clear of notches, the status bar in home-screen mode, and
+       the home indicator; the renderer sizes the canvas inside it. */
     body {
       position: fixed;
       inset: 0;
@@ -50,6 +89,8 @@
       align-items: center;
       justify-content: center;
       overscroll-behavior: none; /* prevent pull-to-refresh */
+      padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+               env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     }
 
     #game {
@@ -60,11 +101,5 @@
 </head>
 <body>
   <canvas id="game"></canvas>
-
-  <!-- Matter.js physics engine (vendored — no CDN dependency, works offline) -->
-  <script src="js/vendor/matter.min.js"></script>
-
-  <!-- Game modules -->
-  <script type="module" src="js/main.js"></script>
 </body>
 </html>

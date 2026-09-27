@@ -1,4 +1,7 @@
 // ── Squishy Fruit — Main Game Loop ──────────────────────────────
+// Must stay the first import: canvas shims for older phones have to be
+// installed before any other module draws
+import './compat.js';
 import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS, DROP_Y, DROP_Y_MIN,
   BALL_TIERS, RAINBOW_TIER, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
@@ -21,6 +24,7 @@ import * as Skins from './skins.js';
 import * as Cups from './cups.js';
 import * as Fever from './fever.js';
 import * as Perf from './perf.js';
+import * as Clock from './clock.js';
 
 // ── State ───────────────────────────────────────────────────────
 let gameState = 'menu'; // 'menu' | 'shop' | 'playing' | 'gameover'
@@ -44,6 +48,11 @@ const TOUCH_TOOLTIP_MS = 3500;
 let touchTooltipId = null;
 let touchTooltipAt = 0;
 
+// Flat bonus for making the rainbow (not multiplied by the combo)
+const RAINBOW_BONUS = 500;
+// Game-over taps are ignored this long so a panicked tap can't skip it
+const GAMEOVER_TAP_GUARD_MS = 800;
+
 // ── Init ────────────────────────────────────────────────────────
 function setup() {
   const canvas = document.getElementById('game');
@@ -56,6 +65,12 @@ function setup() {
   Renderer.init(canvas);
   Input.init(canvas, GAME_WIDTH, GAME_HEIGHT);
   Audio.setMuted(Save.getMuted());
+  // Audio may only start on a real user activation (a release, not a
+  // touchstart). Listen for the whole session: iOS can re-suspend the
+  // context after a call, and the next tap should bring sound back.
+  for (const type of ['touchend', 'mouseup', 'keydown']) {
+    window.addEventListener(type, Audio.unlock, { passive: true });
+  }
 
   // Wire collision → merge + effects
   Physics.onCollision((bodyA, bodyB) => {
@@ -77,10 +92,10 @@ function setup() {
 
     if (merge) {
       const points = merge.points * Fever.getMultiplier();
-      Score.addPoints(points);
+      const earned = Score.addPoints(points);
       Fever.onMerge(Score.combo);
       Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
-      Particles.emitScorePopup(merge.x, merge.y, points, Score.combo);
+      Particles.emitScorePopup(merge.x, merge.y, earned, Score.combo);
       maybeSquirtJuice(merge);
       // The newborn fruit's instrument plays the hit, in key with the
       // band; combos climb the chord on the beat grid
@@ -115,8 +130,33 @@ function setup() {
   Input.setUIHitTest(checkUIHit);
 
   setupMobileFullscreen();
+  loadFont();
+  registerServiceWorker();
 
   requestAnimationFrame(loop);
+}
+
+// ── Font & Offline Cache ────────────────────────────────────────
+// The canvas is the only thing drawing text, and browsers don't fetch
+// a web font until something asks for it — ask up front so the HUD
+// switches to the hand-drawn face within the first frames (text draws
+// in the fallback font until then, never blank).
+function loadFont() {
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load('20px "Patrick Hand"').catch(() => {});
+  }
+}
+
+// Cache the game for instant, offline-capable launches (see sw.js).
+// Skipped on localhost so edits show up on a plain reload while
+// developing.
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+  const register = () => navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Wait for the first load to finish so caching never competes with it
+  if (document.readyState === 'complete') register();
+  else window.addEventListener('load', register, { once: true });
 }
 
 // ── Mobile Fullscreen ───────────────────────────────────────────
@@ -249,7 +289,7 @@ function checkUIHit(x, y) {
 
     case 'gameover': {
       const hit = Menus.checkGameOverHit(x, y);
-      if (hit && performance.now() - gameoverAt > 800) {
+      if (hit && performance.now() - gameoverAt > GAMEOVER_TAP_GUARD_MS) {
         if (hit === 'again') {
           Audio.playMerge(3, 1);
           startGame(currentMode);
@@ -393,7 +433,7 @@ function getEffectiveDangerY() {
 }
 
 function updateDangerLevel() {
-  const now = performance.now();
+  const now = Clock.now();
   let maxDanger = 0;
   const effectiveDangerY = getEffectiveDangerY();
 
@@ -442,8 +482,9 @@ function zenOverflowRelief() {
   const popped = Balls.popBall(expired.body.id);
   if (!popped || popped.tierIndex < 0) return;
 
-  const points = BALL_TIERS[popped.tierIndex].points;
-  Score.addPoints(points);
+  // Banked as a flat bonus: a pop isn't a merge, so it neither feeds
+  // the combo nor counts toward the merge-based coin payout
+  const points = Score.addBonus(BALL_TIERS[popped.tierIndex].points);
   Particles.emitMerge(popped.x, popped.y, popped.tierIndex, 1);
   Particles.emitScorePopup(popped.x, popped.y, points, 1);
   Audio.playDrop(popped.tierIndex);
@@ -466,6 +507,8 @@ function loop(timestamp) {
   // sparkles — so a phone rendering at 30 fps still plays at full
   // speed instead of in slow motion
   const simSteps = Physics.fixedSteps(delta);
+  // Game time moves with the simulation, never with the wall clock
+  Clock.advance(simSteps * Physics.FIXED_DT);
 
   if (gameState === 'menu' || gameState === 'shop') {
     // Belt and suspenders with checkUIHit's consume-everything: no
@@ -477,7 +520,9 @@ function loop(timestamp) {
     // Handle drop / ghost activation
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
-      const now = performance.now();
+
+      // Cooldown runs on game time so a pause can't bank a free drop
+      const now = Clock.now();
 
       // If a ghost ball is actively falling, tap activates it
       const activeGhost = Balls.getActiveGhost();
@@ -528,10 +573,10 @@ function loop(timestamp) {
     const bombResult = Balls.updateBombEffect();
     if (bombResult && bombResult.points > 0) {
       const points = bombResult.points * Fever.getMultiplier();
-      Score.addPoints(points);
+      const earned = Score.addPoints(points, bombResult.merges);
       Fever.onMerge(Score.combo);
       Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
-      Particles.emitScorePopup(bombResult.x, bombResult.y, points, Score.combo);
+      Particles.emitScorePopup(bombResult.x, bombResult.y, earned, Score.combo);
       // A bomb crushing a whole color at once always makes a mess
       maybeSquirtJuice({
         x: bombResult.x, y: bombResult.y, tierIndex: bombResult.tier,
@@ -592,14 +637,14 @@ function loop(timestamp) {
         // Zen: celebrate the rainbow, then it floats away and play continues
         const rb = Balls.consumeRainbow();
         if (rb) {
-          Score.addPoints(500);
+          Score.addBonus(RAINBOW_BONUS);
           Particles.emitMerge(rb.x, rb.y, RAINBOW_TIER, 5);
-          Particles.emitScorePopup(rb.x, rb.y, 500, 1);
+          Particles.emitScorePopup(rb.x, rb.y, RAINBOW_BONUS, 1);
           // The rainbow merge already played the band's fanfare
           Input.hapticWin();
         }
       } else {
-        Score.addPoints(500);
+        Score.addBonus(RAINBOW_BONUS);
         endRun(true, 'rainbow');
 
         // Big celebration particles
@@ -616,9 +661,13 @@ function loop(timestamp) {
 
     if (Input.state.dropRequested) {
       Input.state.dropRequested = false;
-      // Tap anywhere (outside the buttons) replays the same mode.
-      // Small delay to avoid accidental restart.
-      if (performance.now() - gameoverAt > 800) {
+      // Tap anywhere (outside the buttons) replays the same mode — but
+      // only a fresh tap. Drops fire on release, so a finger that was
+      // still aiming when the cup overflowed would otherwise restart
+      // the run the instant it lifted, skipping the results screen.
+      const now = performance.now();
+      if (now - gameoverAt > GAMEOVER_TAP_GUARD_MS &&
+          Input.state.pressStartedAt > gameoverAt) {
         startGame(currentMode);
       }
     }
@@ -649,54 +698,58 @@ function loop(timestamp) {
   }
 
   // Render
-  Renderer.render({
-    gameState,
-    mode: currentMode,
-    fever: { meter: Fever.getMeter(), active: Fever.isActive() },
-    rushTimeLeftMs,
-    dangerEnabled: MODES[currentMode].danger,
-    balls: Balls.getAll(),
-    previewX: Input.state.pointerX,
-    previewTier: currentDropTier,
-    dropY: getDropY(),
-    score: Score.current,
-    bestScore: Math.max(Score.getHighScore(currentMode), Score.current),
-    bestCombo: Math.max(Score.bestCombo, Score.getBestCombo()),
-    combo: Score.combo,
-    mergeEffects: Balls.mergeEffects,
-    won,
-    isNewBest,
-    gameoverReason,
-    coinsEarned,
-    gameoverAt,
-    coinBalance: Save.getCoins(),
-    dangerLevel,
-    isDragging: Input.state.isDragging,
-    isTouchDevice: Input.getIsTouchDevice(),
-    muted: Audio.isMuted(),
-    bombQueued: Store.isBombQueued(),
-    ghostQueued: Store.isGhostQueued(),
-    hasActiveGhost: !!Balls.getActiveGhost(),
-    cupExtendPx: Store.getCupExtendPx(),
-    storePrices: {
-      colorBomb: Store.getPrice('colorBomb'),
-      cupExtend: Store.getPrice('cupExtend'),
-      ghostBall: Store.getPrice('ghostBall'),
-    },
-    storeAffordable: {
-      colorBomb: Store.canAfford('colorBomb', Score.current),
-      cupExtend: Store.canAfford('cupExtend', Score.current),
-      ghostBall: Store.canAfford('ghostBall', Score.current),
-    },
-    storeBlocked: {
-      colorBomb: Store.getBlockReason('colorBomb'),
-      cupExtend: Store.getBlockReason('cupExtend'),
-      ghostBall: Store.getBlockReason('ghostBall'),
-    },
-    storeTooltip,
-    storeTooltipHint,
-  });
+  const rs = renderState;
+  rs.simSteps = simSteps;
+  rs.gameState = gameState;
+  rs.mode = currentMode;
+  rs.fever.meter = Fever.getMeter();
+  rs.fever.active = Fever.isActive();
+  rs.rushTimeLeftMs = rushTimeLeftMs;
+  rs.dangerEnabled = MODES[currentMode].danger;
+  rs.balls = Balls.getAll();
+  rs.previewX = Input.state.pointerX;
+  rs.previewTier = currentDropTier;
+  // A queued bomb drops first without using up the current fruit, so
+  // the current fruit is what really comes next
+  rs.nextTier = Store.isBombQueued() ? currentDropTier : nextDropTier;
+  rs.dropY = getDropY();
+  rs.score = Score.current;
+  rs.bestScore = Math.max(Score.getHighScore(currentMode), Score.current);
+  rs.bestCombo = Math.max(Score.bestCombo, Score.getBestCombo());
+  rs.combo = Score.combo;
+  rs.won = won;
+  rs.isNewBest = isNewBest;
+  rs.gameoverReason = gameoverReason;
+  rs.coinsEarned = coinsEarned;
+  rs.gameoverAt = gameoverAt;
+  rs.coinBalance = Save.getCoins();
+  rs.dangerLevel = dangerLevel;
+  rs.isDragging = Input.state.isDragging;
+  rs.isTouchDevice = Input.getIsTouchDevice();
+  rs.muted = Audio.isMuted();
+  rs.bombQueued = Store.isBombQueued();
+  rs.ghostQueued = Store.isGhostQueued();
+  rs.hasActiveGhost = !!Balls.getActiveGhost();
+  rs.cupExtendPx = Store.getCupExtendPx();
+  for (const id of STORE_IDS) {
+    rs.storePrices[id] = Store.getPrice(id);
+    rs.storeAffordable[id] = Store.canAfford(id, Score.current);
+    rs.storeBlocked[id] = Store.getBlockReason(id);
+  }
+  rs.storeTooltip = storeTooltip;
+  rs.storeTooltipHint = storeTooltipHint;
+  Renderer.render(rs);
 }
+
+// One render-state object reused every frame — rebuilding it (plus its
+// nested objects) 60 times a second is steady garbage for a phone's GC
+const STORE_IDS = ['colorBomb', 'cupExtend', 'ghostBall'];
+const renderState = {
+  fever: { meter: 0, active: false },
+  storePrices: {},
+  storeAffordable: {},
+  storeBlocked: {},
+};
 
 // Little blips while the coin ceremony counts up. Mirrors the count
 // the renderer derives from gameoverAt so sight and sound stay in sync.
@@ -724,6 +777,9 @@ function endRun(wonRun, reason) {
   coinsEarned = computeCoins(wonRun, currentMode);
   Save.addCoins(coinsEarned);
   lastTickedCoins = 0;
+  // The frenzy ends with the run — otherwise its wash and meter keep
+  // pulsing under the results screen
+  Fever.reset();
   Audio.setFeverActive(false);
   Particles.setFeverActive(false);
   Music.stop(1.2);
@@ -768,7 +824,7 @@ function startGame(modeId) {
   Perf.settle(1000);
   won = false;
   isNewBest = false;
-  lastDropTime = performance.now();
+  lastDropTime = Clock.now();
   dangerLevel = 0;
   previouslyUnlocked = new Set([0, 1, 2, 3]);
   seenBombEffect = null;
