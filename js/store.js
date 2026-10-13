@@ -6,9 +6,9 @@ import { CUP_EXTEND_PX, MAX_CUP_EXTENSIONS } from './config.js';
 
 export const STORE_ITEMS = [
   {
-    id: 'colorBomb',
-    name: 'COLOR BOMB',
-    desc: 'Your next drop is a bomb: it pulls in every fruit of the first color it touches and merges them all at once.',
+    id: 'mergeBomb',
+    name: 'MERGE',
+    desc: 'Your next drop is a merge bomb: the first fruit it touches pulls in every matching fruit in the cup, and they all merge at once.',
     basePrice: 150,
     icon: '\u25C9', // ◉
   },
@@ -29,7 +29,7 @@ export const STORE_ITEMS = [
 ];
 
 // Track how many times each item has been bought this game (for price scaling)
-let purchaseCounts = { colorBomb: 0, cupExtend: 0, ghostBall: 0 };
+let purchaseCounts = { mergeBomb: 0, cupExtend: 0, ghostBall: 0 };
 
 // Active state
 let bombQueued = false; // next drop will be a bomb ball
@@ -54,7 +54,7 @@ export function grantFreeCupExtensions(n) {
 // ghost is a one-slot queue — buying a second while one is still waiting
 // to drop would just burn points — and the cup has a height ceiling.
 export function getBlockReason(itemId) {
-  if (itemId === 'colorBomb' && bombQueued) return 'queued';
+  if (itemId === 'mergeBomb' && bombQueued) return 'queued';
   if (itemId === 'ghostBall' && ghostQueued) return 'queued';
   if (itemId === 'cupExtend' && cupExtensions >= MAX_CUP_EXTENSIONS) return 'maxed';
   return null;
@@ -79,7 +79,7 @@ export function purchase(itemId, currentScore) {
 
   purchaseCounts[itemId] = (purchaseCounts[itemId] || 0) + 1;
 
-  if (itemId === 'colorBomb') {
+  if (itemId === 'mergeBomb') {
     bombQueued = true;
   } else if (itemId === 'cupExtend') {
     cupExtensions++;
@@ -115,7 +115,7 @@ export function getCupExtendPx() {
 }
 
 export function reset() {
-  purchaseCounts = { colorBomb: 0, cupExtend: 0, ghostBall: 0 };
+  purchaseCounts = { mergeBomb: 0, cupExtend: 0, ghostBall: 0 };
   bombQueued = false;
   ghostQueued = false;
   cupExtensions = 0;

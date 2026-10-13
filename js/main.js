@@ -6,7 +6,7 @@ import {
   GAME_WIDTH, GAME_HEIGHT, DROP_COOLDOWN_MS, DROP_Y, DROP_Y_MIN,
   BALL_TIERS, RAINBOW_TIER, DANGER_LINE_Y, DANGER_DURATION_MS, MODES,
   COIN_SCORE_DIVISOR, COIN_MERGE_DIVISOR, COIN_WIN_BONUS,
-  ZEN_COIN_SCALE, ZEN_COIN_CAP,
+  ZEN_COIN_SCALE, ZEN_COIN_CAP, STARTING_TIERS, BOMB_RADIUS,
   JUICE_SQUIRT_CHANCE, JUICE_SQUIRT_TIER_BONUS,
 } from './config.js';
 import * as Physics from './physics.js';
@@ -35,8 +35,7 @@ let lastDropTime = 0;
 let won = false;
 let isNewBest = false;
 let dangerLevel = 0; // 0-1, how close to game over
-let previouslyUnlocked = new Set([0, 1, 2, 3]);
-let seenBombEffect = null; // last bomb effect we played the suck sound for
+let previouslyUnlocked = new Set(STARTING_TIERS);
 let coinsEarned = 0; // coins awarded for the run that just ended
 let gameoverAt = 0; // drives restart guard + coin count-up ceremony
 let gameoverReason = 'danger'; // 'danger' | 'time' | 'rainbow'
@@ -57,8 +56,12 @@ const GAMEOVER_TAP_GUARD_MS = 800;
 function setup() {
   const canvas = document.getElementById('game');
   Perf.init();
-  // Particle budgets follow the adaptive quality level
-  const applyBudget = (s) => Particles.setBudget(s.particles, s.juice);
+  // Particle budgets (and how many voices the band layers) follow the
+  // adaptive quality level
+  const applyBudget = (s) => {
+    Particles.setBudget(s.particles, s.juice);
+    Music.setLite(Perf.getLevel() >= 2);
+  };
   applyBudget(Perf.getSettings());
   Perf.onChange((level, settings) => applyBudget(settings));
   Physics.init();
@@ -78,32 +81,23 @@ function setup() {
     // settles, but the run is over: no merges, no points, no fever
     if (gameState !== 'playing') return;
 
-    const merge = Balls.handleCollision(bodyA, bodyB);
+    const ev = Balls.handleCollision(bodyA, bodyB);
+    if (!ev) return;
 
-    // Bomb starts its suck-in phase asynchronously; play the suction
-    // sound once per bomb effect (contact events can re-fire)
-    const bombEffect = Balls.getActiveBombEffect();
-    if (bombEffect && bombEffect !== seenBombEffect) {
-      seenBombEffect = bombEffect;
-      Audio.playBombSuck();
-      Particles.triggerShake(4);
-      return;
-    }
-
-    if (merge) {
-      const points = merge.points * Fever.getMultiplier();
-      const earned = Score.addPoints(points);
-      Fever.onMerge(Score.combo);
-      Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
-      Particles.emitScorePopup(merge.x, merge.y, earned, Score.combo);
-      maybeSquirtJuice(merge);
-      // The newborn fruit's instrument plays the hit, in key with the
-      // band; combos climb the chord on the beat grid
-      Music.onMerge(merge.tierIndex, Score.combo);
-      Input.hapticMerge(merge.tierIndex);
-      Music.bumpActivity();
-
-      checkNewUnlocks();
+    if (ev.type === 'merge') {
+      landMerge(ev);
+    } else if (ev.type === 'gather') {
+      // Fruit are flying together; the merge itself lands in a moment
+      // (updateGathers in the loop). A bomb makes a whoosh of it.
+      if (ev.kind === 'bomb') {
+        Audio.playBombSuck();
+        Particles.triggerShake(4);
+      } else {
+        Audio.playGatherSwoosh();
+      }
+    } else if (ev.type === 'hint') {
+      Particles.emitHint(ev.x, ev.y - BALL_TIERS[ev.tierIndex].radius * 0.6,
+                         'needs 3!', BALL_TIERS[ev.tierIndex].color);
     }
   });
 
@@ -197,12 +191,31 @@ function setupMobileFullscreen() {
   window.addEventListener('touchend', onTap, { passive: true });
 }
 
+// A merge landed (straight away, or at the end of a triple's gather):
+// points, effects, and the newborn fruit's instrument playing the hit
+function landMerge(merge, combos = 1) {
+  const points = merge.points * Fever.getMultiplier();
+  const earned = Score.addPoints(points, merge.merges || 1);
+  Fever.onMerge(Score.combo);
+  Particles.emitMerge(merge.x, merge.y, merge.tierIndex, Score.combo);
+  Particles.emitScorePopup(merge.x, merge.y, earned, Score.combo);
+  maybeSquirtJuice(merge, combos > 1);
+  // In key with the band; combos climb the chord on the beat grid
+  Music.onMerge(merge.tierIndex, Score.combo + combos - 1);
+  Input.hapticMerge(merge.tierIndex);
+  Music.bumpActivity(0.15 * combos);
+  checkNewUnlocks();
+}
+
+// Every new fruit is a milestone: a banner, and its instrument joins
+// the band for the rest of the run
 function checkNewUnlocks() {
   const unlocked = Balls.getUnlockedTiers();
   for (const tier of unlocked) {
     if (!previouslyUnlocked.has(tier)) {
       previouslyUnlocked.add(tier);
       Particles.emitUnlockFlash(tier);
+      Music.onUnlock(tier);
     }
   }
 }
@@ -229,14 +242,22 @@ function maybeSquirtJuice(merge, force = false) {
 // Live fruit outlines so juice can splash onto and run down them
 function refreshJuiceColliders() {
   if (!Particles.hasJuice()) return;
-  const list = [];
+  // Pooled — a fresh array of fresh objects every frame is steady
+  // garbage for a phone's GC while juice is flying
+  let n = 0;
   for (const entry of Balls.getAll().values()) {
     if (entry.isGhost) continue;
-    const r = entry.isBomb ? 16 : BALL_TIERS[entry.tierIndex].radius;
-    list.push({ x: entry.body.position.x, y: entry.body.position.y, r });
+    let c = juiceColliders[n];
+    if (!c) c = juiceColliders[n] = { x: 0, y: 0, r: 0 };
+    c.x = entry.body.position.x;
+    c.y = entry.body.position.y;
+    c.r = Balls.radiusOf(entry);
+    n++;
   }
-  Particles.setJuiceColliders(list, Store.getCupExtendPx());
+  juiceColliders.length = n;
+  Particles.setJuiceColliders(juiceColliders, Store.getCupExtendPx());
 }
+const juiceColliders = [];
 
 // ── Drop Point ──────────────────────────────────────────────────
 // The drop line rises with the cup so fruit always enter from above
@@ -247,7 +268,7 @@ function getDropY() {
 
 // Keep the aim clamp sized to whatever is about to fall
 function syncDropClamp() {
-  const r = Store.isBombQueued() ? 16 : BALL_TIERS[currentDropTier].radius;
+  const r = Store.isBombQueued() ? BOMB_RADIUS : BALL_TIERS[currentDropTier].radius;
   Input.setClampRadius(r);
 }
 
@@ -335,7 +356,7 @@ function checkUIHit(x, y) {
           if (storeHit === 'cupExtend') {
             applyNewCupExtension();
           }
-          // colorBomb/ghostBall just queue for the next drop (handled
+          // mergeBomb/ghostBall just queue for the next drop (handled
           // in drop logic); the bomb is smaller, so re-fit the aim clamp
           syncDropClamp();
 
@@ -539,7 +560,7 @@ function loop(timestamp) {
         const dropY = getDropY();
         const dropX = Input.state.pointerX;
         if (Store.isBombQueued()) {
-          // Drop a bomb ball instead of normal
+          // Drop a merge bomb instead of normal
           Balls.spawnBombBall(dropX, dropY);
           Particles.emitSpawnPop(dropX, dropY, 1); // ~bomb-sized ring
           Audio.playDrop(7); // deeper sound for bomb
@@ -569,25 +590,17 @@ function loop(timestamp) {
     // Step physics
     for (let i = 0; i < simSteps; i++) Physics.stepOnce();
 
-    // Update bomb suck-in effect
-    const bombResult = Balls.updateBombEffect();
-    if (bombResult && bombResult.points > 0) {
-      const points = bombResult.points * Fever.getMultiplier();
-      const earned = Score.addPoints(points, bombResult.merges);
-      Fever.onMerge(Score.combo);
-      Particles.emitMerge(bombResult.x, bombResult.y, bombResult.tier, 5);
-      Particles.emitScorePopup(bombResult.x, bombResult.y, earned, Score.combo);
-      // A bomb crushing a whole color at once always makes a mess
-      maybeSquirtJuice({
-        x: bombResult.x, y: bombResult.y, tierIndex: bombResult.tier,
-        seamAngle: bombResult.seamAngle, sourceTier: bombResult.sourceTier,
-        sourceRadius: bombResult.sourceRadius,
-      }, true);
-      Music.onMerge(bombResult.tier, 3);
-      Input.hapticMerge(8);
-      Music.bumpActivity(0.3);
-      Particles.triggerShake(12);
-      checkNewUnlocks();
+    // Fruit flying together (merge bomb, triple merges) land here
+    for (const g of Balls.updateGathers()) {
+      if (g.kind === 'bomb') {
+        // A bomb crushing every matching fruit at once always makes a
+        // mess, and plays like a combo
+        landMerge(g, 3);
+        Input.hapticMerge(9);
+        Particles.triggerShake(12);
+      } else {
+        landMerge(g);
+      }
     }
 
     // Music tempo tracks run intensity: combo streaks lift it, fever
@@ -743,7 +756,7 @@ function loop(timestamp) {
 
 // One render-state object reused every frame — rebuilding it (plus its
 // nested objects) 60 times a second is steady garbage for a phone's GC
-const STORE_IDS = ['colorBomb', 'cupExtend', 'ghostBall'];
+const STORE_IDS = ['mergeBomb', 'cupExtend', 'ghostBall'];
 const renderState = {
   fever: { meter: 0, active: false },
   storePrices: {},
@@ -777,6 +790,8 @@ function endRun(wonRun, reason) {
   coinsEarned = computeCoins(wonRun, currentMode);
   Save.addCoins(coinsEarned);
   lastTickedCoins = 0;
+  // Fruit mid-flight to a merge drop back into the pile where they are
+  Balls.cancelGathers();
   // The frenzy ends with the run — otherwise its wash and meter keep
   // pulsing under the results screen
   Fever.reset();
@@ -797,7 +812,6 @@ function endRun(wonRun, reason) {
 function startGame(modeId) {
   currentMode = modeId;
   Score.setMode(modeId); // before Score.reset so it loads this mode's records
-  Balls.setZenTiersEnabled(modeId === 'zen');
   Balls.reset();
   Score.reset();
   Particles.reset();
@@ -826,12 +840,13 @@ function startGame(modeId) {
   isNewBest = false;
   lastDropTime = Clock.now();
   dangerLevel = 0;
-  previouslyUnlocked = new Set([0, 1, 2, 3]);
-  seenBombEffect = null;
+  previouslyUnlocked = new Set(STARTING_TIERS);
   coinsEarned = 0;
   touchTooltipId = null;
-  // Called from a click/touch handler, so the AudioContext can start
-  Music.start();
+  // Called from a click/touch handler, so the AudioContext can start.
+  // The band starts with just the starting fruits' instruments; every
+  // unlock adds one.
+  Music.start(modeId, STARTING_TIERS);
 }
 
 function returnToMenu() {

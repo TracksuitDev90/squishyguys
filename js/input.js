@@ -229,9 +229,9 @@ function triggerHaptic(style) {
 }
 
 export function hapticMerge(tierIndex) {
-  if (tierIndex >= 7) {
+  if (tierIndex >= 9) {
     triggerHaptic('heavy');
-  } else if (tierIndex >= 4) {
+  } else if (tierIndex >= 5) {
     triggerHaptic('medium');
   } else {
     triggerHaptic('light');

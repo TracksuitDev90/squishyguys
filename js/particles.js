@@ -5,7 +5,7 @@
 import {
   BALL_TIERS, RAINBOW_TIER, GAME_WIDTH, INK,
   CUP_LEFT_X, CUP_RIGHT_X, CUP_TOP_Y, CUP_BOTTOM_Y, CUP_BASE_EXTRA,
-  MAX_JUICE_DROPLETS,
+  MAX_JUICE_DROPLETS, mergeCountOf,
 } from './config.js';
 import * as Skins from './skins.js';
 
@@ -54,7 +54,7 @@ export function emitMerge(x, y, tierIndex, comboCount) {
     decay: 0.04 - intensity * 0.018,
   });
   // Second thinner ring for higher tiers
-  if (tierIndex >= 4) {
+  if (tierIndex >= 5) {
     shockwaves.push({
       x, y,
       startRadius: r * 0.5,
@@ -65,7 +65,7 @@ export function emitMerge(x, y, tierIndex, comboCount) {
     });
   }
   // Third ring for very high tiers
-  if (tierIndex >= 7) {
+  if (tierIndex >= 9) {
     shockwaves.push({
       x, y,
       startRadius: r * 0.2,
@@ -111,9 +111,9 @@ export function emitMerge(x, y, tierIndex, comboCount) {
     });
   }
 
-  // Confetti for higher tiers (blue+) — scales up dramatically
-  if (tierIndex >= 5) {
-    const confettiCount = Math.round((6 + (tierIndex - 5) * 6) * budget);
+  // Confetti for higher tiers (watermelon+) — scales up dramatically
+  if (tierIndex >= 6) {
+    const confettiCount = Math.round((6 + (tierIndex - 6) * 5) * budget);
     const colors = ['#E74C3C', '#F1C40F', '#2ECC71', '#3498DB', '#A569BD', '#FFD700'];
     for (let i = 0; i < confettiCount; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -198,11 +198,26 @@ export function emitSpawnPop(x, y, tierIndex) {
   });
 }
 
+// Small floating note over the cup ("needs 3!")
+export function emitHint(x, y, text, color = '#FFFFFF') {
+  scorePopups.push({
+    x, y, text,
+    life: 1,
+    decay: 0.009,
+    vy: -0.9,
+    scale: 1.05,
+    color: color === 'rainbow' ? '#FFD700' : color,
+  });
+}
+
 export function emitUnlockFlash(tierIndex) {
   const tier = BALL_TIERS[tierIndex];
   const style = Skins.getTierStyle(tierIndex);
+  // Fruit that need three of a kind say so the moment they appear
+  const next = tierIndex < RAINBOW_TIER ? mergeCountOf(tierIndex) : 2;
   unlockFlashes.push({
-    name: tier.name.toUpperCase(),
+    name: tier.label || tier.name.toUpperCase(),
+    sub: next === 3 ? 'merge 3 of these!' : null,
     color: style.color === 'rainbow' ? '#FFD700' : style.color,
     life: 1,
     // Unlocking a new fruit is a milestone — the banner lingers 10%
@@ -224,13 +239,15 @@ const JUICE_COLORS = {
   peach:       '#FFC076',
   apple:       '#F4CF62', // golden apple juice
   lemon:       '#FBF28C',
+  lime:        '#C9EC7A',
   orange:      '#FFA33B',
   watermelon:  '#FF6478',
   blueberry:   '#5A4BCC',
   grape:       '#8E44AD',
-  plum:        '#C43C96',
-  dragonfruit: '#EA3F8F',
   grapefruit:  '#FF7A8C',
+  plum:        '#B8306E',
+  dragonfruit: '#EA3F8F',
+  blackberry:  '#5E1F5C',
   rainbow:     '#FFD700',
 };
 
@@ -259,7 +276,7 @@ const juiceJets = [];
 export function emitJuiceSquirt(x, y, seamAngle, sourceRadius, tierIndex) {
   const color = juiceColorFor(tierIndex);
   const r = sourceRadius || BALL_TIERS[Math.max(0, tierIndex)].radius;
-  const scale = Math.min(1.5, 0.6 + r / 45); // coconut≈0.87 … plum≈1.5
+  const scale = Math.min(1.5, 0.6 + r / 45); // coconut≈0.84 … grape+≈1.5
   const count = Math.round((14 + r * 0.4) * Math.min(1, budget + 0.25)); // coconut≈19 … plum≈38
   const frames = 7;
   juiceJets.push({
@@ -506,34 +523,44 @@ function drawSparkles(ctx) {
   ctx.restore();
 }
 
+// Four-ray twinkle, spun by hand (no save/rotate/restore per star)
 function drawStar(ctx, x, y, size) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(performance.now() * 0.003);
+  const spin = performance.now() * 0.003;
+  const len = size * 1.5;
+  const c = Math.cos(spin) * len;
+  const s = Math.sin(spin) * len;
   ctx.beginPath();
-  for (let i = 0; i < 4; i++) {
-    const angle = (i / 4) * Math.PI * 2;
-    ctx.moveTo(0, 0);
-    ctx.lineTo(Math.cos(angle) * size * 1.5, Math.sin(angle) * size * 1.5);
-  }
+  ctx.moveTo(x - c, y - s); ctx.lineTo(x + c, y + s);
+  ctx.moveTo(x + s, y - c); ctx.lineTo(x - s, y + c);
   ctx.strokeStyle = ctx.fillStyle;
   ctx.lineWidth = size * 0.5;
   ctx.lineCap = 'round';
   ctx.stroke();
-  ctx.restore();
 }
 
+// Each piece is a rotated quad computed by hand: a save/translate/
+// rotate/restore per piece was ~100 state round-trips a frame after a
+// big merge, which is a measurable chunk of a phone's frame
 function drawConfetti(ctx) {
   if (!confetti.length) return;
+  ctx.save();
   for (const c of confetti) {
-    ctx.save();
+    const cos = Math.cos(c.rotation);
+    const sin = Math.sin(c.rotation);
+    const hw = c.width / 2;
+    const hh = c.height / 2;
+    const ax = cos * hw, ay = sin * hw;   // half-width along the piece
+    const bx = -sin * hh, by = cos * hh;  // half-height across it
     ctx.globalAlpha = c.life;
-    ctx.translate(c.x, c.y);
-    ctx.rotate(c.rotation);
     ctx.fillStyle = c.color;
-    ctx.fillRect(-c.width / 2, -c.height / 2, c.width, c.height);
-    ctx.restore();
+    ctx.beginPath();
+    ctx.moveTo(c.x - ax - bx, c.y - ay - by);
+    ctx.lineTo(c.x + ax - bx, c.y + ay - by);
+    ctx.lineTo(c.x + ax + bx, c.y + ay + by);
+    ctx.lineTo(c.x - ax + bx, c.y - ay + by);
+    ctx.fill();
   }
+  ctx.restore();
 }
 
 function drawScorePopups(ctx) {
@@ -594,6 +621,15 @@ function drawUnlockFlashes(ctx) {
 
     ctx.fillStyle = f.color;
     ctx.fillText(`${f.name} UNLOCKED!`, GAME_WIDTH / 2, yPos);
+
+    if (f.sub) {
+      ctx.font = '16px "Patrick Hand", cursive';
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillText(f.sub, GAME_WIDTH / 2 + 1, yPos + 21);
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.fillText(f.sub, GAME_WIDTH / 2, yPos + 20);
+      row++;
+    }
     ctx.restore();
   }
 }

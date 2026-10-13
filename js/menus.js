@@ -87,7 +87,8 @@ export function drawMenu(ctx) {
   drawDecorBall(330, 68, 15, 2, 37);
   drawDecorBall(354, 212, 26, 4, 23);
   drawDecorBall(44, 620, 22, 3, 41);
-  drawDecorBall(356, 606, 24, 5, 53);
+  drawDecorBall(356, 606, 24, 11, 53);
+  drawDecorBall(40, 214, 16, 12, 67);
 
   ctx.save();
   ctx.textAlign = 'center';
@@ -258,7 +259,7 @@ function drawSkinRows(ctx) {
     drawPanel(ctx, row, { accent, wobbleSeed: wobble++ * 2.3 });
 
     // Palette swatches — a quick taste of the skin
-    const swatchTiers = [1, 2, 4, 6];
+    const swatchTiers = [1, 2, 4, 7];
     swatchTiers.forEach((tierIdx, si) => {
       const src = skin.palette ? skin.palette[tierIdx] : BALL_TIERS[tierIdx];
       ctx.fillStyle = src.color;

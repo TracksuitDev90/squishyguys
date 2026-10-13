@@ -41,32 +41,49 @@ export const BALL_DENSITY = 0.002;
 export const INK = '#1e2f4f';
 export const LEAF_GREEN = '#3aa98f';
 
-// Ball tiers — index 0 is smallest. Every squishy ball is a fruit
-// (except rainbow, which stays special).
-// Merge rule: 2 of same → 1 of next tier
-// Radii step up evenly so every fruit reads at a glance; the apple
-// gets a deliberate size jump over the peach so it lands "slightly
-// bigger" than its neighbors below.
+// Ball tiers — index 0 is smallest, and every tier is bigger than the
+// one before it. Every squishy ball is a fruit; the rainbow squishy at
+// the end is all of them mixed together.
+//
+// Merge rule: `mergeCount` of the same fruit → 1 of the next tier
+// (2 unless noted). The last two fruits before the rainbow need THREE:
+// a pair that touches pulls a third from anywhere in the cup; without
+// one it just squishes together and waits.
+//
+// Radii grow in shrinking steps so the whole chain still fits the cup:
+// the endgame needs two blackberries and three dragonfruits in there
+// at once, so the top tiers can't balloon the way they did when the
+// chain was shorter.
 export const BALL_TIERS = [
-  { name: 'coconut',     radius: 12, color: '#8B5A33', stroke: '#5C3A1E', points: 1   },
-  { name: 'peach',       radius: 16, color: '#FFA07A', stroke: '#D9704C', points: 3   },
-  { name: 'apple',       radius: 21, color: '#E8394F', stroke: '#B02439', points: 6   },
-  { name: 'lemon',       radius: 26, color: '#F4D735', stroke: '#C0A312', points: 10  },
-  { name: 'orange',      radius: 31, color: '#F5921E', stroke: '#C96F10', points: 15  },
-  { name: 'watermelon',  radius: 37, color: '#2ECC71', stroke: '#1E8449', points: 21  },
-  { name: 'blueberry',   radius: 44, color: '#5578DE', stroke: '#3A55AD', points: 28  },
-  { name: 'grape',       radius: 52, color: '#7D3C98', stroke: '#5B2C6F', points: 36  },
-  { name: 'plum',        radius: 61, color: '#A569BD', stroke: '#8E44AD', points: 45  },
-  { name: 'dragonfruit', radius: 70, color: '#E44D8D', stroke: '#B03068', points: 55  },
-  // Zen-exclusive bonus tier: THREE dragonfruits merge into a sliced
-  // grapefruit (peel + cross-section). Outside zen, merge progression
-  // skips straight past it to rainbow.
-  { name: 'grapefruit',  radius: 74, color: '#FF8E62', stroke: '#D1583A', points: 75, zenOnly: true },
-  { name: 'rainbow',     radius: 79, color: 'rainbow', stroke: '#888888', points: 110 },
+  { name: 'coconut',     label: 'COCONUT',     radius: 11,   color: '#8B5A33', stroke: '#5C3A1E', points: 1   },
+  { name: 'peach',       label: 'PEACH',       radius: 14.5, color: '#FFA07A', stroke: '#D9704C', points: 3   },
+  { name: 'apple',       label: 'RED APPLE',   radius: 18,   color: '#E8394F', stroke: '#B02439', points: 6   },
+  { name: 'lemon',       label: 'LEMON',       radius: 21.5, color: '#F4D735', stroke: '#C0A312', points: 10  },
+  { name: 'lime',        label: 'LIME',        radius: 25,   color: '#7BC043', stroke: '#4E8A22', points: 15  },
+  { name: 'orange',      label: 'ORANGE',      radius: 29,   color: '#F5921E', stroke: '#C96F10', points: 21  },
+  { name: 'watermelon',  label: 'WATERMELON',  radius: 33.5, color: '#2ECC71', stroke: '#1E8449', points: 28  },
+  { name: 'blueberry',   label: 'BLUEBERRY',   radius: 38,   color: '#5578DE', stroke: '#3A55AD', points: 36  },
+  { name: 'grape',       label: 'GRAPE',       radius: 42.5, color: '#8A4FB8', stroke: '#5B2C6F', points: 45  },
+  { name: 'grapefruit',  label: 'GRAPEFRUIT',  radius: 47,   color: '#FFAE6B', stroke: '#D1583A', points: 55  },
+  { name: 'plum',        label: 'PLUM',        radius: 51,   color: '#8C2F66', stroke: '#5E1C44', points: 66  },
+  { name: 'dragonfruit', label: 'DRAGONFRUIT', radius: 55,   color: '#E44D8D', stroke: '#B03068', points: 78,  mergeCount: 3 },
+  { name: 'blackberry',  label: 'BLACKBERRY',  radius: 59,   color: '#3B2150', stroke: '#1E0F2B', points: 120, mergeCount: 3 },
+  { name: 'rainbow',     label: 'RAINBOW SQUISHY', radius: 64, color: 'rainbow', stroke: '#888888', points: 200 },
 ];
 
 // Index of the final (rainbow) tier — shared so no module hardcodes it.
 export const RAINBOW_TIER = BALL_TIERS.length - 1;
+
+// How many of a tier merge into one of the next
+export function mergeCountOf(tierIndex) {
+  const t = BALL_TIERS[tierIndex];
+  return (t && t.mergeCount) || 2;
+}
+
+// Fruit a run starts with — the only ones that can drop until the
+// player merges their way to something bigger (and the only
+// instruments in the band until then, see music.js).
+export const STARTING_TIERS = [0, 1, 2];
 
 // Game modes. `danger` off means the run can't end by overflow (zen);
 // `timeLimitMs` set means the run ends when the clock runs out (rush);
@@ -85,6 +102,10 @@ export const MODES = {
     timeLimitMs: null, danger: false, dropCooldownMs: 160,
   },
 };
+
+// The merge bomb (store power-up) — a small ball that doesn't count
+// toward danger and merges every matching fruit at once
+export const BOMB_RADIUS = 16;
 
 // Coin economy — persistent currency earned at the end of every run:
 // floor(score / COIN_SCORE_DIVISOR) + floor(merges / COIN_MERGE_DIVISOR)
@@ -122,10 +143,12 @@ export const FRUIT_HUE_JITTER = 5;    // ± degrees
 export const FRUIT_LIGHT_JITTER = 4;  // ± percent lightness
 export const FRUIT_SAT_JITTER = 6;    // ± percent saturation
 
-// Drop weights (index → relative weight). Only unlocked tiers are eligible.
-// Higher tiers drop less frequently.
-export const DROP_WEIGHTS = [40, 25, 16, 10, 6, 3];
+// Drop weights (index → relative weight). Only unlocked tiers are
+// eligible, so a fruit can't fall from the sky until you've made one.
+// Coconut, peach and apple are the bread and butter; every fruit after
+// them is rarer than the last, down to the odd lucky blueberry.
+export const DROP_WEIGHTS = [30, 26, 22, 10, 6, 3.5, 1.6, 0.6];
 
-// Maximum tier that can ever appear as a drop (watermelon = 5).
+// Maximum tier that can ever appear as a drop (blueberry = 7).
 // Everything larger must be earned through merging.
-export const MAX_DROP_TIER = 5;
+export const MAX_DROP_TIER = DROP_WEIGHTS.length - 1;
