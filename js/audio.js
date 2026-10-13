@@ -8,20 +8,26 @@ let muted = false;
 // faster and brighter without new samples
 let pitchMult = 1;
 
-// Note frequencies for merge sounds (descending — bigger balls = deeper pitch)
+// Note frequencies for merge chimes, one per tier (descending C major —
+// bigger fruit = deeper pitch). The band in music.js plays the real
+// merge hits during a run; these cover menus and the band being off.
 const MERGE_NOTES = [
-  698.46, // F5 - coconut→peach (smallest, highest pitch)
-  659.25, // E5 - peach→apple
-  587.33, // D5 - apple→lemon
-  523.25, // C5 - lemon→orange
-  493.88, // B4 - orange→watermelon
-  440.00, // A4 - watermelon→blueberry
-  392.00, // G4 - blueberry→grape
-  349.23, // F4 - grape→plum
-  329.63, // E4 - plum→dragonfruit
-  293.66, // D4 - dragonfruit→rainbow
-  261.63, // C4 - rainbow bonus (biggest, deepest pitch)
+  783.99, // G5 - coconut (smallest, highest pitch)
+  698.46, // F5 - peach
+  659.25, // E5 - red apple
+  587.33, // D5 - lemon
+  523.25, // C5 - lime
+  493.88, // B4 - orange
+  440.00, // A4 - watermelon
+  392.00, // G4 - blueberry
+  349.23, // F4 - grape
+  329.63, // E4 - grapefruit
+  293.66, // D4 - plum
+  261.63, // C4 - dragonfruit
+  246.94, // B3 - blackberry
+  261.63, // C4 - rainbow squishy (fanfare below)
 ];
+const RAINBOW_NOTE = MERGE_NOTES.length - 1;
 
 function ensureContext() {
   if (!audioCtx) {
@@ -114,26 +120,30 @@ export function playDrop(tierIndex) {
   if (!ctx) return;
 
   const now = ctx.currentTime;
+  // The curves below were tuned for the droppable fruit; zen pops call
+  // this with every tier, and past ~tier 9 the old formula went
+  // negative (exponential ramps need a positive, nonzero value)
+  const t = Math.max(0, Math.min(tierIndex, 9));
 
   // Soft percussive thud — deeper for bigger balls
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = 'sine';
-  osc.frequency.setValueAtTime((220 - tierIndex * 18) * pitchMult, now);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(30, 60 - tierIndex * 4) * pitchMult, now + 0.1);
-  gain.gain.setValueAtTime(0.2 + tierIndex * 0.02, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15 + tierIndex * 0.02);
+  osc.frequency.setValueAtTime((220 - t * 16) * pitchMult, now);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(30, 60 - t * 3.5) * pitchMult, now + 0.1);
+  gain.gain.setValueAtTime(0.2 + t * 0.02, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15 + t * 0.02);
   osc.connect(gain);
   gain.connect(masterGain);
   osc.start(now);
-  osc.stop(now + 0.18 + tierIndex * 0.02);
+  osc.stop(now + 0.18 + t * 0.02);
 
   // Tiny chirp — lower pitch for bigger balls
   const chirp = ctx.createOscillator();
   const chirpGain = ctx.createGain();
   chirp.type = 'sine';
-  chirp.frequency.setValueAtTime(1000 - tierIndex * 70, now);
-  chirp.frequency.exponentialRampToValueAtTime(Math.max(200, 500 - tierIndex * 30), now + 0.08);
+  chirp.frequency.setValueAtTime(1000 - t * 65, now);
+  chirp.frequency.exponentialRampToValueAtTime(Math.max(200, 500 - t * 30), now + 0.08);
   chirpGain.gain.setValueAtTime(0.08, now);
   chirpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
   chirp.connect(chirpGain);
@@ -210,8 +220,8 @@ export function playMerge(tierIndex, comboCount) {
     shimmer.stop(now + 0.4);
   }
 
-  // Rainbow: major chord fanfare (last note in the scale)
-  if (tierIndex === MERGE_NOTES.length - 1) {
+  // Rainbow: major chord fanfare
+  if (tierIndex >= RAINBOW_NOTE) {
     const chord = [1, 1.25, 1.5, 2]; // root, major 3rd, 5th, octave
     chord.forEach((ratio, i) => {
       const delay = 0.1 + i * 0.12;
@@ -263,6 +273,26 @@ export function playBombSuck() {
   subGain.connect(masterGain);
   sub.start(now);
   sub.stop(now + 0.5);
+}
+
+// ── Gather swoosh: a third fruit flying in to a triple merge ────
+export function playGatherSwoosh() {
+  const ctx = ensureContext();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(220 * pitchMult, now);
+  osc.frequency.exponentialRampToValueAtTime(880 * pitchMult, now + 0.24);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(0.12, now + 0.12);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+  osc.connect(gain);
+  gain.connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.3);
 }
 
 // ── Bounce sound: soft impact when balls collide with walls ─────

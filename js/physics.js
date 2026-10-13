@@ -3,8 +3,8 @@ import {
   GAME_WIDTH, GAME_HEIGHT, GRAVITY,
   CUP_WALL_THICKNESS, CUP_BOTTOM_Y, CUP_TOP_Y,
   CUP_LEFT_X, CUP_RIGHT_X, CUP_BASE_EXTRA,
-  BALL_RESTITUTION, BALL_FRICTION, BALL_DENSITY,
-  BALL_TIERS,
+  BALL_FRICTION, BALL_DENSITY,
+  BALL_TIERS, BOMB_RADIUS,
 } from './config.js';
 import * as Clock from './clock.js';
 
@@ -166,7 +166,7 @@ export function createBallBody(x, y, tierIndex) {
 }
 
 export function createBombBody(x, y) {
-  const body = Bodies.circle(x, y, 16, {
+  const body = Bodies.circle(x, y, BOMB_RADIUS, {
     restitution: 0.2,
     friction: 0.03,
     density: BALL_DENSITY,
@@ -208,6 +208,12 @@ export function activateGhostBody(body) {
   body.collisionFilter.mask = COL_WALL | COL_BALL;
   body.isGhost = false;
   body.frictionAir = 0.01; // reset to normal air friction
+}
+
+// Take a fruit out of (or put it back into) the collision world while
+// it flies across the cup to a merge, so it doesn't plough the pile
+export function setBodyGhosted(body, ghosted) {
+  body.collisionFilter.mask = ghosted ? 0 : (COL_WALL | COL_BALL);
 }
 
 export function removeBody(body) {

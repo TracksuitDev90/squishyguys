@@ -4,12 +4,12 @@
 // generic candy gloss is drawn). Purchases spend the persistent coin
 // bank in save.js. Mirrors the store.js module style.
 // Palette order mirrors BALL_TIERS: coconut, peach, apple, lemon,
-// orange, watermelon, blueberry, grape, plum.
+// lime, orange, watermelon, blueberry, grape, grapefruit, plum.
 import { BALL_TIERS } from './config.js';
 import * as Save from './save.js';
 
-// Palettes cover tiers 0-8; dragonfruit and rainbow (9-10) stay special
-// in every skin — they're the goal fruits.
+// Palettes cover tiers 0-10; dragonfruit, blackberry and the rainbow
+// squishy stay themselves in every skin — they're the goal fruits.
 export const SKINS = [
   {
     id: 'classic', name: 'FRUIT SALAD', price: 0, detail: 'fruit',
@@ -23,10 +23,12 @@ export const SKINS = [
       { color: '#FFB88A', stroke: '#D9824A' }, // peach ring
       { color: '#FF5CA8', stroke: '#C73580' }, // bubblegum
       { color: '#FFE066', stroke: '#D4A917' }, // lemon drop
+      { color: '#B6F05A', stroke: '#7FB52A' }, // key lime
       { color: '#FF8C42', stroke: '#CC6318' }, // orange taffy
       { color: '#4CD97B', stroke: '#2A9D54' }, // sour apple
       { color: '#5BC8F5', stroke: '#2E96C4' }, // blue raspberry
       { color: '#9B59D0', stroke: '#6E3A9E' }, // grape gum
+      { color: '#FF9E80', stroke: '#D9684A' }, // pink grapefruit
       { color: '#F06292', stroke: '#C2185B' }, // raspberry cream
     ],
     bg: ['#2b1230', '#3d1a44', '#54245f', '#6b2d6e'],
@@ -38,10 +40,12 @@ export const SKINS = [
       { color: '#FF7E5F', stroke: '#C94F32' },
       { color: '#FF3D81', stroke: '#C4165A' },
       { color: '#F9F871', stroke: '#C9C825' },
+      { color: '#C6FF3D', stroke: '#8FCC0A' },
       { color: '#FF9E1F', stroke: '#D97706' },
       { color: '#39FF88', stroke: '#0FBF5F' },
       { color: '#26C6FF', stroke: '#0891C9' },
       { color: '#B26BFF', stroke: '#7C3AED' },
+      { color: '#FF8A65', stroke: '#D9562F' },
       { color: '#FF6BF5', stroke: '#C026D3' },
     ],
     bg: ['#05010f', '#0a0520', '#141033', '#1b1440'],
@@ -53,10 +57,12 @@ export const SKINS = [
       { color: '#F8E4CE', stroke: '#3A3A3A' },
       { color: '#F5D9D9', stroke: '#3A3A3A' },
       { color: '#F5EFC9', stroke: '#3A3A3A' },
+      { color: '#E4F2CF', stroke: '#3A3A3A' },
       { color: '#F7DFC2', stroke: '#3A3A3A' },
       { color: '#D5EAD3', stroke: '#3A3A3A' },
       { color: '#D3DEF2', stroke: '#3A3A3A' },
       { color: '#E3D3EE', stroke: '#3A3A3A' },
+      { color: '#F7DCD2', stroke: '#3A3A3A' },
       { color: '#EFD8F0', stroke: '#3A3A3A' },
     ],
     bg: ['#26221c', '#2e2a22', '#3a352a', '#453f31'],
@@ -94,7 +100,7 @@ export function refresh() {
 }
 
 // The renderer's single color source for tier fills/strokes.
-// Falls back to BALL_TIERS for dragonfruit/rainbow and the classic skin.
+// Falls back to BALL_TIERS for the goal fruits and the classic skin.
 export function getTierStyle(tierIndex) {
   const skin = resolveActiveSkin();
   if (skin.palette && skin.palette[tierIndex]) return skin.palette[tierIndex];

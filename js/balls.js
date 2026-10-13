@@ -1,37 +1,19 @@
 // ── Ball Management & Merging ───────────────────────────────────
 import {
-  BALL_TIERS, DROP_WEIGHTS, MAX_DROP_TIER,
-  DANGER_LINE_Y, DANGER_DURATION_MS, DROP_Y,
+  BALL_TIERS, RAINBOW_TIER, DROP_WEIGHTS, MAX_DROP_TIER, STARTING_TIERS,
+  DANGER_LINE_Y, DANGER_DURATION_MS, DROP_Y, BOMB_RADIUS, mergeCountOf,
 } from './config.js';
 import * as Physics from './physics.js';
 import * as Clock from './clock.js';
 
-// All active balls: Map<body.id, { body, tierIndex }>
+// All active balls: Map<body.id, { body, tierIndex, isBomb?, isGhost? }>
 const activeBalls = new Map();
 
 // Merge effects for renderer
 export const mergeEffects = [];
 
-// Tiers the player has unlocked (created via merge). Starts with 0-3.
-const unlockedTiers = new Set([0, 1, 2, 3]);
-
-// Zen-exclusive tiers (grapefruit) only exist while this is on; set by
-// main.js at run start. Outside zen, merge progression skips them.
-let zenTiersEnabled = false;
-
-export function setZenTiersEnabled(on) {
-  zenTiersEnabled = !!on;
-}
-
-// The tier a merge produces from `tierIndex`, skipping zen-only tiers
-// when they're disabled (classic/rush: dragonfruit → rainbow directly).
-function nextTierFrom(tierIndex) {
-  let next = tierIndex + 1;
-  while (next < BALL_TIERS.length - 1 && BALL_TIERS[next].zenOnly && !zenTiersEnabled) {
-    next++;
-  }
-  return next;
-}
+// Tiers the player has unlocked (created via merge) this run
+const unlockedTiers = new Set(STARTING_TIERS);
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -44,10 +26,14 @@ export function spawnBall(x, tierIndex, y = DROP_Y) {
 }
 
 export function spawnBombBall(x, y = DROP_Y) {
-  // Bomb ball: small (radius ~16), special label
   const body = Physics.createBombBody(x, y);
   activeBalls.set(body.id, { body, tierIndex: -1, isBomb: true });
   return body;
+}
+
+// Collision radius of any entry (bombs aren't a fruit tier)
+export function radiusOf(entry) {
+  return entry.isBomb ? BOMB_RADIUS : BALL_TIERS[entry.tierIndex].radius;
 }
 
 // ── Ghost Ball ─────────────────────────────────────────────────
@@ -95,61 +81,54 @@ export function reset() {
   activeBalls.clear();
   mergeEffects.length = 0;
   activeGhostBall = null;
-  activeBombEffect = null; // a run can end mid-suck (rush clock, zen exit)
+  gathers.length = 0;
   recentDrops.length = 0;
+  hintCooldownUntil = 0;
   unlockedTiers.clear();
-  [0, 1, 2, 3].forEach(t => unlockedTiers.add(t));
+  for (const t of STARTING_TIERS) unlockedTiers.add(t);
 }
 
 // ── Drop Tier Selection ─────────────────────────────────────────
 // Last two tiers handed to the drop queue, newest first (anti-streak).
 const recentDrops = [];
+const dropPool = [];
 
 export function getNextDropTier() {
-  // Build weighted pool from unlocked tiers that are allowed as drops.
-  // As the player unlocks more tiers, coconut's dominance fades and
-  // mid-tier fruits become more common.
-  const unlockCount = Math.min(unlockedTiers.size, BALL_TIERS.length);
+  // Weighted pool from unlocked tiers that are allowed as drops. The
+  // first three fruits always dominate; as the player unlocks more of
+  // the chain, coconut's share fades a little and the mid fruits pick
+  // it up, so a long run gets a slightly beefier mix without ever
+  // flipping the order (a lemon never becomes likelier than an apple).
+  const extra = Math.max(0, unlockedTiers.size - STARTING_TIERS.length);
 
   let totalWeight = 0;
-  const pool = [];
+  dropPool.length = 0;
 
   for (let i = 0; i <= MAX_DROP_TIER; i++) {
-    if (unlockedTiers.has(i) && DROP_WEIGHTS[i] > 0) {
-      let weight = DROP_WEIGHTS[i];
+    if (!unlockedTiers.has(i) || !(DROP_WEIGHTS[i] > 0)) continue;
+    let weight = DROP_WEIGHTS[i];
 
-      // Scale coconut down as more tiers unlock (4 base → 11 max unlocks)
-      // At 4 unlocks: full weight. At 7+: roughly halved.
-      if (i === 0 && unlockCount > 4) {
-        const reduction = Math.min((unlockCount - 4) * 0.12, 0.55);
-        weight = Math.round(weight * (1 - reduction));
-      }
+    if (i === 0) weight *= 1 - Math.min(extra * 0.05, 0.3);  // ≥ 21
+    else if (i >= 3) weight *= 1 + Math.min(extra * 0.04, 0.3);
 
-      // Boost tiers 1+ (peach through watermelon) slightly as game progresses
-      if (i >= 1 && i <= MAX_DROP_TIER && unlockCount > 4) {
-        const boost = 1 + Math.min((unlockCount - 4) * 0.08, 0.4);
-        weight = Math.round(weight * boost);
-      }
-
-      // Anti-streak: the same tier twice in a row becomes much less
-      // likely a third time, so drops feel varied rather than random-clumpy
-      if (recentDrops.length >= 2 && recentDrops[0] === i && recentDrops[1] === i) {
-        weight = Math.max(1, Math.round(weight * 0.3));
-      }
-
-      pool.push({ tier: i, weight });
-      totalWeight += weight;
+    // Anti-streak: the same tier twice in a row becomes much less
+    // likely a third time, so drops feel varied rather than random-clumpy
+    if (recentDrops.length >= 2 && recentDrops[0] === i && recentDrops[1] === i) {
+      weight *= 0.3;
     }
+
+    dropPool.push(i, weight);
+    totalWeight += weight;
   }
 
-  if (pool.length === 0) return 0;
+  if (dropPool.length === 0) return 0;
 
   let roll = Math.random() * totalWeight;
-  let picked = pool[pool.length - 1].tier;
-  for (const entry of pool) {
-    roll -= entry.weight;
+  let picked = dropPool[dropPool.length - 2];
+  for (let k = 0; k < dropPool.length; k += 2) {
+    roll -= dropPool[k + 1];
     if (roll <= 0) {
-      picked = entry.tier;
+      picked = dropPool[k];
       break;
     }
   }
@@ -160,21 +139,25 @@ export function getNextDropTier() {
 }
 
 // ── Collision → Merge ───────────────────────────────────────────
-// Returns { points, tierIndex, x, y } when a merge happened, else null.
+// Returns what the touch did, or null:
+//   { type: 'merge', points, tierIndex, x, y, seamAngle, sourceTier, sourceRadius }
+//   { type: 'gather', kind: 'bomb' | 'triple', tierIndex, x, y }
+//       — fruit are flying together; the merge lands a moment later
+//         through updateGathers()
+//   { type: 'hint', tierIndex, x, y } — a pair that needs a third
 export function handleCollision(bodyA, bodyB) {
   const ballA = activeBalls.get(bodyA.id);
   const ballB = activeBalls.get(bodyB.id);
 
   if (!ballA || !ballB) return null;
 
-  // Check for bomb collision
+  // Merge bomb: pulls in every fruit matching whatever it touched
   if (ballA.isBomb || ballB.isBomb) {
     // Two bombs bumping is just a bump — nothing to pull in
     if (ballA.isBomb && ballB.isBomb) return null;
     const bomb = ballA.isBomb ? ballA : ballB;
     const target = ballA.isBomb ? ballB : ballA;
-    triggerBombEffect(bomb, target);
-    return null; // bomb points are awarded when the suck-in completes
+    return triggerBomb(bomb, target);
   }
 
   if (ballA.tierIndex !== ballB.tierIndex) return null;
@@ -184,189 +167,254 @@ export function handleCollision(bodyA, bodyB) {
   const tierIndex = ballA.tierIndex;
 
   // Rainbow can't merge further
-  if (tierIndex >= BALL_TIERS.length - 1) return null;
+  if (tierIndex >= RAINBOW_TIER) return null;
 
-  // Zen's grapefruit needs THREE dragonfruits: when a pair touches and
-  // the next tier is zen-only, look for a third one anywhere in the cup.
+  // Dragonfruit and blackberry need THREE: when a pair touches, the
+  // nearest third one anywhere in the cup flies over to join them.
   // Without a third, the pair just squishes together and waits.
-  if (zenTiersEnabled && BALL_TIERS[tierIndex + 1] && BALL_TIERS[tierIndex + 1].zenOnly) {
-    for (const [, entry] of activeBalls) {
+  if (mergeCountOf(tierIndex) === 3) {
+    const mx = (bodyA.position.x + bodyB.position.x) / 2;
+    const my = (bodyA.position.y + bodyB.position.y) / 2;
+    let third = null;
+    let best = Infinity;
+    for (const entry of activeBalls.values()) {
       if (entry.tierIndex !== tierIndex) continue;
       if (entry.isGhost || entry.isBomb) continue;
       if (entry.body.isMerging) continue;
       if (entry.body === bodyA || entry.body === bodyB) continue;
-      return performMerge([bodyA, bodyB, entry.body], tierIndex);
+      const dx = entry.body.position.x - mx;
+      const dy = entry.body.position.y - my;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) { best = d2; third = entry.body; }
     }
-    return null;
+    if (!third) return maybeHint(tierIndex, mx, my);
+    startGather('triple', tierIndex, [bodyA, bodyB, third], [false, false, true], mx, my, TRIPLE_GATHER_MS);
+    return { type: 'gather', kind: 'triple', tierIndex, x: mx, y: my };
   }
 
-  return performMerge([bodyA, bodyB], tierIndex);
+  return { type: 'merge', ...performMerge([bodyA, bodyB], tierIndex) };
 }
 
-// ── Bomb Effect ─────────────────────────────────────────────────
-// When a bomb hits a ball, suck in ALL balls of that color then merge.
-let activeBombEffect = null;
+// "Needs 3" nudge — at most one every few seconds of game time, so a
+// pair resting against each other doesn't spam it every step
+const HINT_COOLDOWN_MS = 5000;
+let hintCooldownUntil = 0;
 
-export function getActiveBombEffect() {
-  return activeBombEffect;
+function maybeHint(tierIndex, x, y) {
+  const now = Clock.now();
+  if (now < hintCooldownUntil) return null;
+  hintCooldownUntil = now + HINT_COOLDOWN_MS;
+  return { type: 'hint', tierIndex, x, y };
 }
 
-function triggerBombEffect(bombEntry, targetEntry) {
-  // One bomb effect at a time — a second trigger mid-suck would strand
-  // the first effect's balls with isMerging stuck on
-  if (activeBombEffect) return;
+// ── Gathers (bomb suck-in, triple merges) ───────────────────────
+// Fruit flying together before a merge. Flyers are taken out of the
+// collision world for the trip (they'd otherwise plough through the
+// pile) and eased in on game time; the merge lands when they arrive.
+// Any number can run at once — each owns its own fruit.
+const BOMB_GATHER_MS = 450;
+const TRIPLE_GATHER_MS = 260;
+const gathers = [];
+const finishedGathers = [];
 
+function startGather(kind, tierIndex, bodies, flies, cx, cy, durationMs) {
+  const targets = bodies.map((body, i) => ({
+    id: body.id,
+    body,
+    fly: flies[i],
+    startX: body.position.x,
+    startY: body.position.y,
+  }));
+  for (const t of targets) {
+    t.body.isMerging = true;
+    if (t.fly) Physics.setBodyGhosted(t.body, true);
+  }
+  gathers.push({
+    kind, tierIndex, targets,
+    // A bomb pulls everything to one fixed point; a triple flies the
+    // third fruit to wherever the touching pair is now
+    centerX: cx, centerY: cy,
+    pair: kind === 'triple' ? [targets[0], targets[1]] : null,
+    startTime: Clock.now(),
+    duration: durationMs,
+  });
+}
+
+function triggerBomb(bombEntry, targetEntry) {
   const targetTier = targetEntry.tierIndex;
 
-  // Can't bomb rainbows or ghost balls
-  if (targetTier >= BALL_TIERS.length - 1) return;
-  if (targetEntry.isGhost) return;
+  // Can't bomb rainbows, ghosts, or fruit already on their way to a merge
+  if (targetTier < 0 || targetTier >= RAINBOW_TIER) return null;
+  if (targetEntry.isGhost || targetEntry.body.isMerging) return null;
 
-  // Gather all balls of the target tier (before removing bomb)
-  const targets = [];
-  for (const [id, entry] of activeBalls) {
-    if (entry === bombEntry) continue; // skip the bomb itself
-    if (entry.isBomb || entry.isGhost) continue; // phasing/bomb balls stay put
+  const bodies = [];
+  for (const entry of activeBalls.values()) {
+    if (entry.isBomb || entry.isGhost) continue;
     if (entry.tierIndex === targetTier && !entry.body.isMerging) {
-      targets.push({ id, body: entry.body });
+      bodies.push(entry.body);
     }
   }
 
-  // Need at least 2 balls to merge — don't consume the bomb if not enough
-  if (targets.length < 2) return;
+  // Not enough of that fruit to make even one merge — the bomb stays
+  // put (unspent) and waits to touch something else
+  if (bodies.length < mergeCountOf(targetTier)) return null;
 
-  // Remove the bomb ball (only after confirming we have targets)
   activeBalls.delete(bombEntry.body.id);
   Physics.removeBody(bombEntry.body);
 
-  // Calculate center point
-  const midX = targets.reduce((s, t) => s + t.body.position.x, 0) / targets.length;
-  const midY = targets.reduce((s, t) => s + t.body.position.y, 0) / targets.length;
+  let cx = 0;
+  let cy = 0;
+  for (const b of bodies) { cx += b.position.x; cy += b.position.y; }
+  cx /= bodies.length;
+  cy /= bodies.length;
 
-  // Mark all targets as merging so normal collisions won't touch them
-  for (const t of targets) {
-    t.body.isMerging = true;
-    // Store original positions for lerping
-    t.startX = t.body.position.x;
-    t.startY = t.body.position.y;
+  startGather('bomb', targetTier, bodies, bodies.map(() => true), cx, cy, BOMB_GATHER_MS);
+  return { type: 'gather', kind: 'bomb', tierIndex: targetTier, x: cx, y: cy };
+}
+
+// Called once per frame from the game loop. Returns the merges that
+// landed this frame (a reused array — read it before the next call):
+//   { kind, points, merges, tierIndex, x, y, seamAngle, sourceTier, sourceRadius }
+export function updateGathers() {
+  finishedGathers.length = 0;
+  if (!gathers.length) return finishedGathers;
+  const now = Clock.now();
+
+  for (let g = gathers.length - 1; g >= 0; g--) {
+    const ga = gathers[g];
+    // A fruit can vanish mid-flight (zen pop, run reset); a pair that
+    // lost a member has nothing left to merge into
+    const lost = ga.targets.some((t) => !activeBalls.has(t.id));
+    if (lost && ga.kind === 'triple') {
+      releaseTargets(ga.targets);
+      gathers.splice(g, 1);
+      continue;
+    }
+
+    if (ga.pair) {
+      ga.centerX = (ga.pair[0].body.position.x + ga.pair[1].body.position.x) / 2;
+      ga.centerY = (ga.pair[0].body.position.y + ga.pair[1].body.position.y) / 2;
+    }
+
+    const progress = Math.min((now - ga.startTime) / ga.duration, 1);
+    // Ease-in (cubic): a slow tug that snaps home at the end
+    const eased = progress * progress * progress;
+    for (const t of ga.targets) {
+      if (!t.fly || !activeBalls.has(t.id)) continue;
+      Physics.setBodyPosition(t.body, {
+        x: t.startX + (ga.centerX - t.startX) * eased,
+        y: t.startY + (ga.centerY - t.startY) * eased,
+      });
+      Physics.setBodyVelocity(t.body, { x: 0, y: 0 });
+    }
+
+    if (progress >= 1) {
+      gathers.splice(g, 1);
+      const result = finishGather(ga);
+      if (result) finishedGathers.push(result);
+    }
+  }
+  return finishedGathers;
+}
+
+function finishGather(ga) {
+  const live = ga.targets.filter((t) => activeBalls.has(t.id));
+  const group = mergeCountOf(ga.tierIndex);
+  const groups = Math.floor(live.length / group);
+  let points = 0;
+  let merged = 0;
+  let last = null;
+
+  for (let i = 0; i < groups; i++) {
+    const members = live.slice(i * group, (i + 1) * group);
+    for (const t of members) Physics.setBodyGhosted(t.body, false);
+    // Several fruits born at one point would be stuck inside each other;
+    // fan a bomb's results out around the center
+    let at = null;
+    if (ga.kind === 'bomb') {
+      const a = i * 2.4;
+      const d = groups > 1 ? BALL_TIERS[ga.tierIndex].radius * 0.6 : 0;
+      at = { x: ga.centerX + Math.cos(a) * d, y: ga.centerY + Math.sin(a) * d };
+    } else if (ga.kind === 'triple') {
+      at = { x: ga.centerX, y: ga.centerY };
+    }
+    last = performMerge(members.map((t) => t.body), ga.tierIndex, at);
+    points += last.points;
+    merged++;
   }
 
-  // Set up the async suck-in effect
-  activeBombEffect = {
-    targetTier,
-    targets,
-    centerX: midX,
-    centerY: midY,
-    startTime: Clock.now(),
-    suckDuration: 450, // ms of game time to suck in
+  // The odd fruit out goes back to normal play — never leave a ball
+  // ghosted or flagged isMerging, or it could never merge again
+  releaseTargets(live.slice(groups * group));
+
+  if (!last) return null;
+  if (ga.kind === 'bomb') {
+    mergeEffects.push({
+      x: ga.centerX, y: ga.centerY, tierIndex: last.tierIndex,
+      startTime: performance.now(), duration: 800,
+    });
+  }
+  return {
+    kind: ga.kind,
+    points,
+    merges: merged,
+    tierIndex: last.tierIndex,
+    x: ga.centerX,
+    y: ga.centerY,
+    // A bomb has no single pinch — spray anywhere
+    seamAngle: ga.kind === 'bomb' ? Math.random() * Math.PI : last.seamAngle,
+    sourceTier: ga.tierIndex,
+    sourceRadius: BALL_TIERS[ga.tierIndex].radius,
   };
 }
 
-// Called each frame from game loop. Returns { points, tier, x, y } when merge happens.
-export function updateBombEffect() {
-  if (!activeBombEffect) return null;
-
-  const elapsed = Clock.now() - activeBombEffect.startTime;
-  const progress = Math.min(elapsed / activeBombEffect.suckDuration, 1);
-  const { targets, centerX, centerY, targetTier } = activeBombEffect;
-
-  // Ease-in: slow start, fast end (cubic)
-  const eased = progress * progress * progress;
-
-  // Pull all target balls toward center
+function releaseTargets(targets) {
   for (const t of targets) {
     if (!activeBalls.has(t.id)) continue;
-    const body = t.body;
-    const newX = t.startX + (centerX - t.startX) * eased;
-    const newY = t.startY + (centerY - t.startY) * eased;
-    Physics.setBodyPosition(body, { x: newX, y: newY });
-    Physics.setBodyVelocity(body, { x: 0, y: 0 });
+    t.body.isMerging = false;
+    if (t.fly) Physics.setBodyGhosted(t.body, false);
   }
-
-  // When suck-in is complete, merge all pairs
-  if (progress >= 1) {
-    const pairs = Math.floor(targets.length / 2);
-    let totalPoints = 0;
-    let merged = 0;
-
-    for (let i = 0; i < pairs; i++) {
-      const a = targets[i * 2];
-      const b = targets[i * 2 + 1];
-      if (!activeBalls.has(a.id) || !activeBalls.has(b.id)) continue;
-      const merge = performMerge([a.body, b.body], targetTier);
-      totalPoints += merge.points;
-      merged++;
-    }
-
-    // Anything not consumed (the odd ball out, or a pair whose partner
-    // vanished mid-suck) goes back to normal play — never leave a ball
-    // stranded with isMerging on, or it can never merge again
-    for (const t of targets) {
-      if (activeBalls.has(t.id)) t.body.isMerging = false;
-    }
-
-    // Big merge effect at center
-    if (totalPoints > 0) {
-      mergeEffects.push({
-        x: centerX,
-        y: centerY,
-        tierIndex: nextTierFrom(targetTier),
-        startTime: performance.now(),
-        duration: 800,
-      });
-    }
-
-    const result = {
-      points: totalPoints,
-      merges: merged, // pairs that actually merged (feeds the coin payout)
-      tier: nextTierFrom(targetTier),
-      x: centerX,
-      y: centerY,
-      seamAngle: Math.random() * Math.PI, // no single pinch — spray anywhere
-      sourceTier: targetTier,
-      sourceRadius: BALL_TIERS[targetTier].radius,
-    };
-    activeBombEffect = null;
-    return result;
-  }
-
-  return null; // Still sucking in
 }
 
-function performMerge(bodies, tierIndex) {
-  const nextTier = nextTierFrom(tierIndex);
+// The run ended (or was abandoned) with fruit mid-flight: drop them
+// back into the world where they are instead of leaving them ghosted
+export function cancelGathers() {
+  for (const ga of gathers) releaseTargets(ga.targets);
+  gathers.length = 0;
+}
+
+export function isGathering() {
+  return gathers.length > 0;
+}
+
+// `at` overrides where the new fruit appears (defaults to between the
+// first two bodies — the pair that actually touched).
+function performMerge(bodies, tierIndex, at = null) {
+  const nextTier = tierIndex + 1;
   const nextTierData = BALL_TIERS[nextTier];
 
-  // Mark all as merging
   for (const b of bodies) {
     b.isMerging = true;
   }
 
-  // The new fruit appears between the two that actually touched. A zen
-  // triple pulls in a third from anywhere in the cup, and averaging it
-  // in used to spawn the grapefruit somewhere in mid-air between them.
   const a = bodies[0];
   const b = bodies[1];
-  const mx = (a.position.x + b.position.x) / 2;
-  const my = (a.position.y + b.position.y) / 2;
+  const mx = at ? at.x : (a.position.x + b.position.x) / 2;
+  const my = at ? at.y : (a.position.y + b.position.y) / 2;
   // Juice squirts out of the pinch, perpendicular to the line of centers
   const seamAngle = Math.atan2(b.position.y - a.position.y,
                                b.position.x - a.position.x) + Math.PI / 2;
 
-  // Remove old balls
-  for (const b of bodies) {
-    activeBalls.delete(b.id);
-    Physics.removeBody(b);
+  for (const body of bodies) {
+    activeBalls.delete(body.id);
+    Physics.removeBody(body);
   }
 
-  // Spawn new ball
   const newBody = Physics.createBallBody(mx, my, nextTier);
   activeBalls.set(newBody.id, { body: newBody, tierIndex: nextTier });
 
-  // Unlock tier
   unlockedTiers.add(nextTier);
 
-  // Add merge effect
   mergeEffects.push({
     x: mx,
     y: my,
@@ -394,7 +442,7 @@ function performMerge(bodies, tierIndex) {
 export function findExpiredDangerBall(dangerY) {
   const effectiveDangerY = dangerY != null ? dangerY : DANGER_LINE_Y;
   const now = Clock.now();
-  for (const [, entry] of activeBalls) {
+  for (const entry of activeBalls.values()) {
     const { body } = entry;
     if (body.isMerging) continue;
     if (entry.isBomb) continue; // bomb balls don't cause game over
@@ -403,8 +451,7 @@ export function findExpiredDangerBall(dangerY) {
     // Ignore recently spawned balls (give them time to fall)
     if (now - body.createdAt < 1500) continue;
 
-    const tierRadius = entry.tierIndex >= 0 ? BALL_TIERS[entry.tierIndex].radius : 16;
-    if (body.position.y - tierRadius < effectiveDangerY) {
+    if (body.position.y - BALL_TIERS[entry.tierIndex].radius < effectiveDangerY) {
       if (!body.aboveDangerSince) {
         body.aboveDangerSince = now;
       } else if (now - body.aboveDangerSince > DANGER_DURATION_MS) {
@@ -439,7 +486,7 @@ export function popBall(id) {
 // Zen mode: the rainbow celebrates and leaves so play can continue.
 export function consumeRainbow() {
   for (const [id, entry] of activeBalls) {
-    if (entry.tierIndex === BALL_TIERS.length - 1) {
+    if (entry.tierIndex === RAINBOW_TIER) {
       return popBall(id);
     }
   }
@@ -449,7 +496,7 @@ export function consumeRainbow() {
 // ── Rainbow Check ───────────────────────────────────────────────
 export function hasRainbow() {
   for (const { tierIndex } of activeBalls.values()) {
-    if (tierIndex === BALL_TIERS.length - 1) return true;
+    if (tierIndex === RAINBOW_TIER) return true;
   }
   return false;
 }
